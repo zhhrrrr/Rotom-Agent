@@ -56,18 +56,6 @@ class AgentOrchestrator:
             logger.error("Orchestrator run not found run_id=%s", run_id)
             return None
 
-        # 一旦 Worker 真正开始处理，就把状态从 queued 改成 running。
-        # 前端查询 /api/runs/{run_id} 时就能看到任务正在执行。
-        await run_service.update_status(run_id, "running", current_step="run.started")
-        await event_log_service.record(
-            event_type="run.started",
-            message="Run started",
-            user_id=run.user_id,
-            workspace_id=run.workspace_id,
-            session_id=run.session_id,
-            run_id=run.id,
-        )
-
         try:
             # ContextBuilder 负责把 system prompt + 最近历史消息拼成模型 messages。
             # 这里拿到的 messages 会随着工具调用不断追加内容。

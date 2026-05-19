@@ -11,6 +11,7 @@ from app.queue.rabbitmq import (
     get_rabbitmq_channel,
     get_rabbitmq_connection,
 )
+from app.services import EventLogService, RunService
 
 setup_logging()
 logger = get_logger(__name__)
@@ -31,14 +32,57 @@ async def handle_message(message: AbstractIncomingMessage) -> None:
     # requeue=False 表示如果这里抛异常，不把消息重新放回队列。
     # 骨架阶段这样可以避免坏消息反复消费造成死循环。
     async with message.process(requeue=False):
-        # producer.py 只发送 {"run_id": "..."}。
-        # RabbitMQ 只负责排队，不保存完整用户输入和上下文。
-        payload = json.loads(message.body.decode("utf-8"))
-        run_id = payload["run_id"]
+        try:
+            # producer.py 只发送 {"run_id": "..."}。
+            # RabbitMQ 只负责通知，不保存完整用户输入、user_id 或 workspace_id。
+            payload = json.loads(message.body.decode("utf-8"))
+            run_id = payload["run_id"]
+        except (json.JSONDecodeError, KeyError, TypeError):
+            logger.exception("Worker received invalid message body=%s", message.body)
+            return
+
         logger.info("Worker consume run run_id=%s", run_id)
 
         # Worker 没有 FastAPI 的 Depends(get_session)，所以要手动创建数据库会话。
         async with AsyncSessionLocal() as db:
+            run_service = RunService(db)
+            event_log_service = EventLogService(db)
+            run = await run_service.get_run(run_id)
+            if run is None:
+                logger.warning("Worker ack missing run run_id=%s", run_id)
+                return
+
+            if run.status != "queued":
+                logger.info(
+                    "Worker ack non-queued run run_id=%s status=%s",
+                    run_id,
+                    run.status,
+                )
+                return
+
+            await event_log_service.record(
+                event_type="worker.run.received",
+                message="Worker received run",
+                user_id=run.user_id,
+                workspace_id=run.workspace_id,
+                session_id=run.session_id,
+                run_id=run.id,
+                payload={"status": run.status},
+            )
+            await run_service.update_status(
+                run_id,
+                "running",
+                current_step="run.started",
+            )
+            await event_log_service.record(
+                event_type="run.started",
+                message="Run started",
+                user_id=run.user_id,
+                workspace_id=run.workspace_id,
+                session_id=run.session_id,
+                run_id=run.id,
+            )
+
             orchestrator = AgentOrchestrator(db)
             try:
                 result = await orchestrator.run(run_id)
@@ -47,9 +91,18 @@ async def handle_message(message: AbstractIncomingMessage) -> None:
                     return
 
                 logger.info("Worker run completed run_id=%s", run_id)
-            except Exception:
+            except Exception as exc:
                 logger.exception("Worker exception run_id=%s", run_id)
-                raise
+                await run_service.update_status(run_id, "failed", error=str(exc))
+                await event_log_service.record(
+                    event_type="run.failed",
+                    message=str(exc),
+                    user_id=run.user_id,
+                    workspace_id=run.workspace_id,
+                    session_id=run.session_id,
+                    run_id=run.id,
+                )
+                return
 
 
 async def run_worker() -> None:
