@@ -4,16 +4,16 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
-from app.db.models import Run
+from app.db.models import DEFAULT_USER_ID, DEFAULT_WORKSPACE_ID, Run
 
 logger = get_logger(__name__)
 
 
-ACTIVE_STATUSES = {"queued", "running"}
+ACTIVE_STATUSES = {"queued", "running", "requires_approval"}
 
 # 这些状态表示一次 Run 已经结束。
 # 进入终态时，RunService 会自动写 finished_at。
-TERMINAL_STATUSES = {"completed", "failed", "cancelled"}
+TERMINAL_STATUSES = {"completed", "failed", "cancelled", "timeout"}
 
 
 # RunService 负责 runs 表。
@@ -29,9 +29,13 @@ class RunService:
         session_id: str,
         user_input: str,
         status: str = "queued",
+        user_id: str = DEFAULT_USER_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> Run:
         # 新任务默认 queued，表示已经创建但还没被 Worker 执行。
         run = Run(
+            user_id=user_id,
+            workspace_id=workspace_id,
             session_id=session_id,
             user_input=user_input,
             status=status,
@@ -62,6 +66,7 @@ class RunService:
         run_id: str,
         status: str,
         error: str | None = None,
+        current_step: str | None = None,
     ) -> Run | None:
         # 先查出这条 run。不存在时返回 None，由调用方决定怎么处理。
         run = await self.get_run(run_id)
@@ -72,6 +77,12 @@ class RunService:
         old_status = run.status
         run.status = status
         run.error = error
+        if current_step is not None:
+            run.current_step = current_step
+        elif status in TERMINAL_STATUSES:
+            run.current_step = f"run.{status}"
+        if status == "running" and run.started_at is None:
+            run.started_at = datetime.now(UTC)
 
         # 如果进入 completed/failed/cancelled，并且还没结束时间，就记录完成时间。
         if status in TERMINAL_STATUSES and run.finished_at is None:

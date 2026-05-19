@@ -1,5 +1,6 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db.models import DEFAULT_USER_ID, DEFAULT_WORKSPACE_ID
 from app.db.models import Session as SessionModel
 
 
@@ -11,9 +12,18 @@ class SessionService:
         # Service 不自己创建连接，只使用外部传进来的 session，方便统一管理事务和测试。
         self.db = db
 
-    async def create_session(self, title: str = "New Session") -> SessionModel:
+    async def create_session(
+        self,
+        title: str = "New Session",
+        user_id: str = DEFAULT_USER_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
+    ) -> SessionModel:
         # 创建 ORM 对象。此时它还只在 Python 内存里，没有真正写进数据库。
-        session = SessionModel(title=title)
+        session = SessionModel(
+            title=title,
+            user_id=user_id,
+            workspace_id=workspace_id,
+        )
         # add() 把对象加入当前数据库会话，等待提交。
         self.db.add(session)
         # commit() 提交事务，真正 INSERT 到数据库。

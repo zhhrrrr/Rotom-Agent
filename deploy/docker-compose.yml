@@ -1,7 +1,7 @@
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: rotom-agent-postgres
+    container_name: rotom-postgres
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-rotom_agent}
       POSTGRES_USER: ${POSTGRES_USER:-ALPHA}
@@ -18,7 +18,7 @@ services:
 
   rabbitmq:
     image: rabbitmq:3-management-alpine
-    container_name: rotom-agent-rabbitmq
+    container_name: rotom-rabbitmq
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:-ALPHA}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:-rotom_dev_password}
@@ -36,7 +36,7 @@ services:
   backend:
     build:
       context: ../backend
-    container_name: rotom-agent-backend
+    container_name: rotom-backend
     env_file:
       - ../backend/.env
     ports:
@@ -52,7 +52,7 @@ services:
   worker:
     build:
       context: ../backend
-    container_name: rotom-agent-worker
+    container_name: rotom-worker
     env_file:
       - ../backend/.env
     command: python worker.py

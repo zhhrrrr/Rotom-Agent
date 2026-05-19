@@ -7,9 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
 from app.db.database import get_session
-from app.db.models import Message
+from app.db.models import DEFAULT_USER_ID, DEFAULT_WORKSPACE_ID, Message
 from app.queue.producer import publish_run
-from app.services import MessageService, RunService, SessionService
+from app.services import EventLogService, MessageService, RunService, SessionService
 
 
 # APIRouter 是 FastAPI 的“路由分组”。
@@ -26,10 +26,14 @@ class ChatRequest(BaseModel):
     message: str = Field(min_length=1)
     # session_id 可选：不传就创建新会话；传了就继续已有会话。
     session_id: str | None = None
+    user_id: str = DEFAULT_USER_ID
+    workspace_id: str = DEFAULT_WORKSPACE_ID
 
 
 # 响应模型用于规定接口返回给前端/调用方的 JSON 结构。
 class ChatResponse(BaseModel):
+    user_id: str
+    workspace_id: str
     session_id: str
     run_id: str
     status: str
@@ -37,6 +41,8 @@ class ChatResponse(BaseModel):
 
 class RunResponse(BaseModel):
     run_id: str
+    user_id: str
+    workspace_id: str
     session_id: str
     status: str
     error: str | None
@@ -62,18 +68,50 @@ async def create_chat_run(
     session_service = SessionService(db)
     message_service = MessageService(db)
     run_service = RunService(db)
+    event_log_service = EventLogService(db)
+    await event_log_service.record(
+        event_type="chat.request.received",
+        message="Chat request received",
+        user_id=request.user_id,
+        workspace_id=request.workspace_id,
+        payload={"has_session_id": request.session_id is not None},
+    )
+    await event_log_service.record(
+        event_type="gateway.auth.checked",
+        message="Gateway auth checked",
+        user_id=request.user_id,
+        workspace_id=request.workspace_id,
+        payload={"mode": "default-user"},
+    )
+    await event_log_service.record(
+        event_type="workspace.resolved",
+        message="Workspace resolved",
+        user_id=request.user_id,
+        workspace_id=request.workspace_id,
+    )
 
     if request.session_id is None:
         # 没传 session_id，说明这是一个新会话。
         # title 暂时用用户消息前 50 个字符，后续可以让模型总结标题。
         session = await session_service.create_session(
             title=request.message[:50],
+            user_id=request.user_id,
+            workspace_id=request.workspace_id,
         )
     else:
         # 传了 session_id，就先确认这个会话确实存在。
         session = await session_service.get_session(request.session_id)
         if session is None:
             raise HTTPException(status_code=404, detail="Session not found")
+        if session.user_id != request.user_id or session.workspace_id != request.workspace_id:
+            raise HTTPException(status_code=403, detail="Session does not belong to user workspace")
+    await event_log_service.record(
+        event_type="session.resolved",
+        message="Session resolved",
+        user_id=request.user_id,
+        workspace_id=request.workspace_id,
+        session_id=session.id,
+    )
 
     # 并发控制：同一个 Session 同一时间只允许一个 queued/running Run。
     # 全局并发交给 Worker 数量和 RabbitMQ prefetch_count 控制。
@@ -90,6 +128,16 @@ async def create_chat_run(
         session_id=session.id,
         user_input=request.message,
         status="queued",
+        user_id=request.user_id,
+        workspace_id=request.workspace_id,
+    )
+    await event_log_service.record(
+        event_type="run.created",
+        message="Run created",
+        user_id=request.user_id,
+        workspace_id=request.workspace_id,
+        session_id=session.id,
+        run_id=run.id,
     )
     logger.info("API created run run_id=%s session_id=%s", run.id, session.id)
     # 保存 user message 到 PostgreSQL。
@@ -98,14 +146,26 @@ async def create_chat_run(
         session_id=session.id,
         run_id=run.id,
         content=request.message,
+        user_id=request.user_id,
+        workspace_id=request.workspace_id,
     )
     # 把 run_id 投递到 RabbitMQ，让 Worker 后台异步执行。
     await publish_run(run.id)
+    await event_log_service.record(
+        event_type="run.queued",
+        message="Run queued",
+        user_id=request.user_id,
+        workspace_id=request.workspace_id,
+        session_id=session.id,
+        run_id=run.id,
+    )
     logger.info("API queued run run_id=%s session_id=%s", run.id, session.id)
 
     # 立即返回 queued，不等待模型执行。
     # 这样 HTTP 请求不会被长时间阻塞。
     return ChatResponse(
+        user_id=request.user_id,
+        workspace_id=request.workspace_id,
         session_id=session.id,
         run_id=run.id,
         status=run.status,
@@ -143,6 +203,8 @@ async def get_run_result(
 
     return RunResponse(
         run_id=run.id,
+        user_id=run.user_id,
+        workspace_id=run.workspace_id,
         session_id=run.session_id,
         status=run.status,
         error=run.error,

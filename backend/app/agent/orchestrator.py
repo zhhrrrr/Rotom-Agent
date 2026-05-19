@@ -1,4 +1,5 @@
 import json
+from time import perf_counter
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -6,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agent.context_builder import ContextBuilder
 from app.agent.zhipu_model_client import ZhipuModelClient
 from app.core.logging import get_logger
-from app.services import MessageService, RunService
+from app.services import EventLogService, MessageService, ModelCallService, RunService
 from app.tools import ToolBroker, tool_registry
 
 logger = get_logger(__name__)
@@ -46,6 +47,8 @@ class AgentOrchestrator:
         # Service 层负责具体数据库操作，Orchestrator 只编排流程。
         run_service = RunService(self.db)
         message_service = MessageService(self.db)
+        event_log_service = EventLogService(self.db)
+        model_call_service = ModelCallService(self.db)
 
         # RabbitMQ 里只保存 run_id，所以 Worker 消费后要先回 PostgreSQL 查完整 Run。
         run = await run_service.get_run(run_id)
@@ -55,12 +58,29 @@ class AgentOrchestrator:
 
         # 一旦 Worker 真正开始处理，就把状态从 queued 改成 running。
         # 前端查询 /api/runs/{run_id} 时就能看到任务正在执行。
-        await run_service.update_status(run_id, "running")
+        await run_service.update_status(run_id, "running", current_step="run.started")
+        await event_log_service.record(
+            event_type="run.started",
+            message="Run started",
+            user_id=run.user_id,
+            workspace_id=run.workspace_id,
+            session_id=run.session_id,
+            run_id=run.id,
+        )
 
         try:
             # ContextBuilder 负责把 system prompt + 最近历史消息拼成模型 messages。
             # 这里拿到的 messages 会随着工具调用不断追加内容。
             messages = await ContextBuilder(self.db).build(run.session_id)
+            await event_log_service.record(
+                event_type="context.built",
+                message="Context built",
+                user_id=run.user_id,
+                workspace_id=run.workspace_id,
+                session_id=run.session_id,
+                run_id=run.id,
+                payload={"message_count": len(messages)},
+            )
             # tool_registry.openai_tools() 只给模型“工具说明书”，不执行工具。
             # 真正执行工具是在下面 ToolBroker.invoke()。
             tools = tool_registry.openai_tools()
@@ -73,8 +93,67 @@ class AgentOrchestrator:
                     run_id,
                     iteration,
                 )
-                response = await self.model_client.chat(messages=messages, tools=tools)
+                await run_service.update_status(
+                    run_id,
+                    "running",
+                    current_step="model.call.started",
+                )
+                await event_log_service.record(
+                    event_type="model.call.started",
+                    message="Model call started",
+                    user_id=run.user_id,
+                    workspace_id=run.workspace_id,
+                    session_id=run.session_id,
+                    run_id=run.id,
+                    payload={"iteration": iteration},
+                )
+                started_at = perf_counter()
+                request_messages = [dict(message) for message in messages]
+                try:
+                    response = await self.model_client.chat(messages=messages, tools=tools)
+                except Exception as exc:
+                    await model_call_service.record(
+                        user_id=run.user_id,
+                        workspace_id=run.workspace_id,
+                        session_id=run.session_id,
+                        run_id=run.id,
+                        provider="zhipu",
+                        model=self.model_client.model,
+                        request_messages=request_messages,
+                        request_tools=tools,
+                        status="failed",
+                        latency_ms=int((perf_counter() - started_at) * 1000),
+                        error=str(exc),
+                    )
+                    raise
+
+                latency_ms = int((perf_counter() - started_at) * 1000)
                 assistant_message = response.choices[0].message
+                usage = getattr(response, "usage", None)
+                await model_call_service.record(
+                    user_id=run.user_id,
+                    workspace_id=run.workspace_id,
+                    session_id=run.session_id,
+                    run_id=run.id,
+                    provider="zhipu",
+                    model=self.model_client.model,
+                    request_messages=request_messages,
+                    request_tools=tools,
+                    response_message=self._dump_model_object(assistant_message),
+                    prompt_tokens=getattr(usage, "prompt_tokens", None),
+                    completion_tokens=getattr(usage, "completion_tokens", None),
+                    latency_ms=latency_ms,
+                    status="completed",
+                )
+                await event_log_service.record(
+                    event_type="model.call.completed",
+                    message="Model call completed",
+                    user_id=run.user_id,
+                    workspace_id=run.workspace_id,
+                    session_id=run.session_id,
+                    run_id=run.id,
+                    payload={"iteration": iteration, "latency_ms": latency_ms},
+                )
                 tool_calls = assistant_message.tool_calls or []
                 logger.info(
                     "Orchestrator model response run_id=%s iteration=%s tool_calls=%s",
@@ -110,9 +189,27 @@ class AgentOrchestrator:
                         # 例如 '{"path": "."}' -> {"path": "."}
                         tool_name = tool_call.function.name
                         tool_args = self._parse_tool_args(tool_call.function.arguments)
+                        await event_log_service.record(
+                            event_type="tool.call.started",
+                            message=f"Tool call started: {tool_name}",
+                            user_id=run.user_id,
+                            workspace_id=run.workspace_id,
+                            session_id=run.session_id,
+                            run_id=run.id,
+                            payload={"tool_name": tool_name, "tool_args": tool_args},
+                        )
                         # 这里会真正执行 list_dir/read_file/write_file/run_shell 等工具，
                         # 并保存一条 tool_calls 记录。
                         tool_result = await broker.invoke(tool_name, tool_args)
+                        await event_log_service.record(
+                            event_type="tool.call.completed",
+                            message=f"Tool call completed: {tool_name}",
+                            user_id=run.user_id,
+                            workspace_id=run.workspace_id,
+                            session_id=run.session_id,
+                            run_id=run.id,
+                            payload={"tool_name": tool_name, "success": tool_result.get("success")},
+                        )
 
                         # 把工具结果追加成 role="tool" 的消息。
                         # tool_call_id 必须和模型上一条 assistant tool_call 的 id 对应。
@@ -157,13 +254,33 @@ class AgentOrchestrator:
                     session_id=run.session_id,
                     run_id=run_id,
                     content=content,
+                    user_id=run.user_id,
+                    workspace_id=run.workspace_id,
+                    meta={"model": self.model_client.model},
                 )
                 await run_service.update_status(run_id, "completed")
+                await event_log_service.record(
+                    event_type="run.completed",
+                    message="Run completed",
+                    user_id=run.user_id,
+                    workspace_id=run.workspace_id,
+                    session_id=run.session_id,
+                    run_id=run.id,
+                )
                 logger.info("Orchestrator run completed run_id=%s", run_id)
                 return content
 
             error = f"Agent exceeded max_iterations={self.max_iterations}"
             await run_service.update_status(run_id, "failed", error=error)
+            await event_log_service.record(
+                event_type="run.failed",
+                message=error,
+                user_id=run.user_id,
+                workspace_id=run.workspace_id,
+                session_id=run.session_id,
+                run_id=run.id,
+                payload={"max_iterations": self.max_iterations},
+            )
             logger.error("Orchestrator run failed run_id=%s error=%s", run_id, error)
             return None
 
@@ -172,6 +289,14 @@ class AgentOrchestrator:
             # 这样任务不会一直卡在 running，前端也能看到 error。
             logger.exception("Orchestrator exception run_id=%s", run_id)
             await run_service.update_status(run_id, "failed", error=str(exc))
+            await event_log_service.record(
+                event_type="run.failed",
+                message=str(exc),
+                user_id=run.user_id,
+                workspace_id=run.workspace_id,
+                session_id=run.session_id,
+                run_id=run.id,
+            )
             return None
 
     async def execute(self, run_id: str) -> str | None:
@@ -212,3 +337,10 @@ class AgentOrchestrator:
             raise ValueError("Tool arguments must be a JSON object")
 
         return parsed
+
+    def _dump_model_object(self, value: Any) -> dict[str, Any]:
+        if hasattr(value, "model_dump"):
+            return value.model_dump(mode="json")
+        if isinstance(value, dict):
+            return value
+        return {"value": str(value)}

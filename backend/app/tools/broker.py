@@ -5,7 +5,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
-from app.db.models import ToolCall
+from app.db.models import DEFAULT_USER_ID, DEFAULT_WORKSPACE_ID, Run, ToolCall
 from app.tools.registry import ToolRegistry, tool_registry
 
 
@@ -34,6 +34,7 @@ class ToolBroker:
         self.registry = registry
 
     async def invoke(self, tool_name: str, args: dict[str, Any]) -> ToolResult:
+        user_id, workspace_id = await self._run_scope()
         logger.info(
             "Tool call start run_id=%s tool_name=%s args=%s",
             self.run_id,
@@ -54,6 +55,8 @@ class ToolBroker:
                 result=result,
                 status="failed",
                 error=result["error"],
+                user_id=user_id,
+                workspace_id=workspace_id,
             )
             logger.error(
                 "Tool call end run_id=%s tool_name=%s success=false error=%s",
@@ -64,6 +67,8 @@ class ToolBroker:
             return result
 
         tool_call = ToolCall(
+            user_id=user_id,
+            workspace_id=workspace_id,
             run_id=self.run_id,
             tool_name=tool_name,
             tool_args=args,
@@ -135,8 +140,12 @@ class ToolBroker:
         result: ToolResult,
         status: str,
         error: str | None = None,
+        user_id: str = DEFAULT_USER_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> ToolCall:
         tool_call = ToolCall(
+            user_id=user_id,
+            workspace_id=workspace_id,
             run_id=self.run_id,
             tool_name=tool_name,
             tool_args=args,
@@ -149,6 +158,12 @@ class ToolBroker:
         await self.db.commit()
         await self.db.refresh(tool_call)
         return tool_call
+
+    async def _run_scope(self) -> tuple[str, str]:
+        run = await self.db.get(Run, self.run_id)
+        if run is None:
+            return DEFAULT_USER_ID, DEFAULT_WORKSPACE_ID
+        return run.user_id, run.workspace_id
 
     def _normalize_data(self, raw_data: Any) -> dict[str, Any]:
         # Broker 对外统一返回 {"data": {...}}。

@@ -6,6 +6,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    app_name: str = Field(default="Rotom Agent", alias="APP_NAME")
     database_url: str = Field(alias="DATABASE_URL")
     rabbitmq_url: str = Field(alias="RABBITMQ_URL")
     rabbitmq_queue: str = Field(alias="RABBITMQ_QUEUE")
