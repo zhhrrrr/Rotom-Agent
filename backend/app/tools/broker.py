@@ -5,7 +5,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
-from app.db.models import DEFAULT_USER_ID, DEFAULT_WORKSPACE_ID, Run, ToolCall
+from app.db.models import DEFAULT_USER_ID, DEFAULT_WORKSPACE_ID, Run, ToolCall, Workspace
 from app.tools.registry import ToolRegistry, tool_registry
 
 
@@ -34,7 +34,7 @@ class ToolBroker:
         self.registry = registry
 
     async def invoke(self, tool_name: str, args: dict[str, Any]) -> ToolResult:
-        user_id, workspace_id = await self._run_scope()
+        user_id, workspace_id, workspace_root = await self._run_scope()
         logger.info(
             "Tool call start run_id=%s tool_name=%s args=%s",
             self.run_id,
@@ -81,7 +81,7 @@ class ToolBroker:
         try:
             # args 来自模型 tool call，一般是 {"path": "..."}。
             # **args 会把它展开成 list_dir(path="...") 这种调用。
-            raw_data = tool.handler(**args)
+            raw_data = tool.handler(**args, workspace_root=workspace_root)
             if isinstance(raw_data, Awaitable):
                 raw_data = await raw_data
 
@@ -159,11 +159,14 @@ class ToolBroker:
         await self.db.refresh(tool_call)
         return tool_call
 
-    async def _run_scope(self) -> tuple[str, str]:
+    async def _run_scope(self) -> tuple[str, str, str | None]:
         run = await self.db.get(Run, self.run_id)
         if run is None:
-            return DEFAULT_USER_ID, DEFAULT_WORKSPACE_ID
-        return run.user_id, run.workspace_id
+            return DEFAULT_USER_ID, DEFAULT_WORKSPACE_ID, None
+
+        workspace = await self.db.get(Workspace, run.workspace_id)
+        workspace_root = workspace.root_path if workspace is not None else None
+        return run.user_id, run.workspace_id, workspace_root
 
     def _normalize_data(self, raw_data: Any) -> dict[str, Any]:
         # Broker 对外统一返回 {"data": {...}}。

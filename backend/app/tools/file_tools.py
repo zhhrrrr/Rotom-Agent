@@ -8,16 +8,18 @@ MAX_READ_BYTES = 200_000
 MAX_WRITE_BYTES = 200_000
 
 
-def _workspace_root() -> Path:
+def _workspace_root(workspace_root: str | None = None) -> Path:
     # WORKSPACE_ROOT 来自 .env。
     # resolve() 会把相对路径、符号链接、.. 都规整成真实绝对路径。
+    if workspace_root is not None:
+        return Path(workspace_root).resolve()
     return settings.workspace_root.resolve()
 
 
-def _resolve_workspace_path(path: str) -> Path:
+def _resolve_workspace_path(path: str, workspace_root: str | None = None) -> Path:
     """把用户传入路径解析成 WORKSPACE_ROOT 内部的安全路径。"""
 
-    root = _workspace_root()
+    root = _workspace_root(workspace_root)
     raw_path = Path(path)
 
     # 绝对路径例如 /etc/passwd 不允许直接使用。
@@ -38,25 +40,25 @@ def _resolve_workspace_path(path: str) -> Path:
     return target
 
 
-def _relative_workspace_path(path: Path) -> str:
+def _relative_workspace_path(path: Path, workspace_root: str | None = None) -> str:
     # 返回给模型看的路径使用相对 WORKSPACE_ROOT 的形式，避免泄露容器绝对路径。
-    relative_path = path.relative_to(_workspace_root())
+    relative_path = path.relative_to(_workspace_root(workspace_root))
     return "." if str(relative_path) == "." else relative_path.as_posix()
 
 
-def _is_inside_workspace(path: Path) -> bool:
+def _is_inside_workspace(path: Path, workspace_root: str | None = None) -> bool:
     try:
-        path.resolve().relative_to(_workspace_root())
+        path.resolve().relative_to(_workspace_root(workspace_root))
     except ValueError:
         return False
 
     return True
 
 
-def list_dir(path: str = ".") -> list[dict[str, Any]]:
+def list_dir(path: str = ".", workspace_root: str | None = None) -> list[dict[str, Any]]:
     """列出 WORKSPACE_ROOT 内部某个目录下的文件和子目录。"""
 
-    target = _resolve_workspace_path(path)
+    target = _resolve_workspace_path(path, workspace_root)
 
     if not target.exists():
         raise FileNotFoundError(f"Directory not found: {path}")
@@ -66,7 +68,7 @@ def list_dir(path: str = ".") -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
     for item in sorted(target.iterdir(), key=lambda item: (item.is_file(), item.name.lower())):
         # 如果工作区里有符号链接指向外部，不能跟随它去读外部文件信息。
-        if item.is_symlink() and not _is_inside_workspace(item):
+        if item.is_symlink() and not _is_inside_workspace(item, workspace_root):
             item_type = "symlink"
             size = None
         else:
@@ -76,7 +78,7 @@ def list_dir(path: str = ".") -> list[dict[str, Any]]:
         entries.append(
             {
                 "name": item.name,
-                "path": _relative_workspace_path(item),
+                "path": _relative_workspace_path(item, workspace_root),
                 "type": item_type,
                 "size": size,
             }
@@ -85,10 +87,10 @@ def list_dir(path: str = ".") -> list[dict[str, Any]]:
     return entries
 
 
-def read_file(path: str) -> str:
+def read_file(path: str, workspace_root: str | None = None) -> str:
     """读取 WORKSPACE_ROOT 内部的 UTF-8 文本文件。"""
 
-    target = _resolve_workspace_path(path)
+    target = _resolve_workspace_path(path, workspace_root)
 
     if not target.exists():
         raise FileNotFoundError(f"File not found: {path}")
@@ -100,10 +102,10 @@ def read_file(path: str) -> str:
     return target.read_text(encoding="utf-8")
 
 
-def write_file(path: str, content: str) -> dict[str, Any]:
+def write_file(path: str, content: str, workspace_root: str | None = None) -> dict[str, Any]:
     """向 WORKSPACE_ROOT 内部写入 UTF-8 文本文件。"""
 
-    target = _resolve_workspace_path(path)
+    target = _resolve_workspace_path(path, workspace_root)
     encoded_content = content.encode("utf-8")
 
     if len(encoded_content) > MAX_WRITE_BYTES:
@@ -116,6 +118,6 @@ def write_file(path: str, content: str) -> dict[str, Any]:
     target.write_text(content, encoding="utf-8")
 
     return {
-        "path": _relative_workspace_path(target),
+        "path": _relative_workspace_path(target, workspace_root),
         "bytes": len(encoded_content),
     }

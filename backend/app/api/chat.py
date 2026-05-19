@@ -5,11 +5,12 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.deps import get_current_user
 from app.core.logging import get_logger
 from app.db.database import get_session
-from app.db.models import DEFAULT_USER_ID, DEFAULT_WORKSPACE_ID, Message
+from app.db.models import Message, User
 from app.queue.producer import publish_run
-from app.services import EventLogService, MessageService, RunService, SessionService
+from app.services import EventLogService, MessageService, RunService, SessionService, UserService
 
 
 # APIRouter 是 FastAPI 的“路由分组”。
@@ -26,8 +27,7 @@ class ChatRequest(BaseModel):
     message: str = Field(min_length=1)
     # session_id 可选：不传就创建新会话；传了就继续已有会话。
     session_id: str | None = None
-    user_id: str = DEFAULT_USER_ID
-    workspace_id: str = DEFAULT_WORKSPACE_ID
+    workspace_id: str | None = None
 
 
 # 响应模型用于规定接口返回给前端/调用方的 JSON 结构。
@@ -63,31 +63,41 @@ async def create_chat_run(
     # 每次请求进来时，FastAPI 会调用 get_session() 创建 AsyncSession，
     # 然后把 db 传进这个函数；请求结束后 session 会自动关闭。
     db: Annotated[AsyncSession, Depends(get_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
 ) -> ChatResponse:
     # Service 层封装数据库操作，API 层只编排业务流程。
     session_service = SessionService(db)
     message_service = MessageService(db)
     run_service = RunService(db)
+    user_service = UserService(db)
     event_log_service = EventLogService(db)
+
+    workspace = await user_service.resolve_workspace(
+        user=current_user,
+        workspace_id=request.workspace_id,
+    )
+    if workspace is None:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+
     await event_log_service.record(
         event_type="chat.request.received",
         message="Chat request received",
-        user_id=request.user_id,
-        workspace_id=request.workspace_id,
+        user_id=current_user.id,
+        workspace_id=workspace.id,
         payload={"has_session_id": request.session_id is not None},
     )
     await event_log_service.record(
         event_type="gateway.auth.checked",
         message="Gateway auth checked",
-        user_id=request.user_id,
-        workspace_id=request.workspace_id,
-        payload={"mode": "default-user"},
+        user_id=current_user.id,
+        workspace_id=workspace.id,
+        payload={"mode": "jwt"},
     )
     await event_log_service.record(
         event_type="workspace.resolved",
         message="Workspace resolved",
-        user_id=request.user_id,
-        workspace_id=request.workspace_id,
+        user_id=current_user.id,
+        workspace_id=workspace.id,
     )
 
     if request.session_id is None:
@@ -95,21 +105,21 @@ async def create_chat_run(
         # title 暂时用用户消息前 50 个字符，后续可以让模型总结标题。
         session = await session_service.create_session(
             title=request.message[:50],
-            user_id=request.user_id,
-            workspace_id=request.workspace_id,
+            user_id=current_user.id,
+            workspace_id=workspace.id,
         )
     else:
         # 传了 session_id，就先确认这个会话确实存在。
         session = await session_service.get_session(request.session_id)
         if session is None:
             raise HTTPException(status_code=404, detail="Session not found")
-        if session.user_id != request.user_id or session.workspace_id != request.workspace_id:
+        if session.user_id != current_user.id or session.workspace_id != workspace.id:
             raise HTTPException(status_code=403, detail="Session does not belong to user workspace")
     await event_log_service.record(
         event_type="session.resolved",
         message="Session resolved",
-        user_id=request.user_id,
-        workspace_id=request.workspace_id,
+        user_id=current_user.id,
+        workspace_id=workspace.id,
         session_id=session.id,
     )
 
@@ -128,14 +138,14 @@ async def create_chat_run(
         session_id=session.id,
         user_input=request.message,
         status="queued",
-        user_id=request.user_id,
-        workspace_id=request.workspace_id,
+        user_id=current_user.id,
+        workspace_id=workspace.id,
     )
     await event_log_service.record(
         event_type="run.created",
         message="Run created",
-        user_id=request.user_id,
-        workspace_id=request.workspace_id,
+        user_id=current_user.id,
+        workspace_id=workspace.id,
         session_id=session.id,
         run_id=run.id,
     )
@@ -146,16 +156,16 @@ async def create_chat_run(
         session_id=session.id,
         run_id=run.id,
         content=request.message,
-        user_id=request.user_id,
-        workspace_id=request.workspace_id,
+        user_id=current_user.id,
+        workspace_id=workspace.id,
     )
     # 把 run_id 投递到 RabbitMQ，让 Worker 后台异步执行。
     await publish_run(run.id)
     await event_log_service.record(
         event_type="run.queued",
         message="Run queued",
-        user_id=request.user_id,
-        workspace_id=request.workspace_id,
+        user_id=current_user.id,
+        workspace_id=workspace.id,
         session_id=session.id,
         run_id=run.id,
     )
@@ -164,8 +174,8 @@ async def create_chat_run(
     # 立即返回 queued，不等待模型执行。
     # 这样 HTTP 请求不会被长时间阻塞。
     return ChatResponse(
-        user_id=request.user_id,
-        workspace_id=request.workspace_id,
+        user_id=current_user.id,
+        workspace_id=workspace.id,
         session_id=session.id,
         run_id=run.id,
         status=run.status,
@@ -185,10 +195,13 @@ async def create_chat_run(
 async def get_run_result(
     run_id: str,
     db: Annotated[AsyncSession, Depends(get_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
 ) -> RunResponse:
     run_service = RunService(db)
     run = await run_service.get_run(run_id)
     if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    if run.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="Run not found")
 
     # 最终回答保存在 messages 表，role=assistant，且属于当前 run_id。

@@ -1,13 +1,23 @@
+from app.services.auth_service import (
+    AuthService,
+    EmailAlreadyRegisteredError,
+    InvalidCredentialsError,
+)
 from app.services.event_log_service import EventLogService
 from app.services.message_service import MessageService
 from app.services.model_call_service import ModelCallService
 from app.services.run_service import RunService
 from app.services.session_service import SessionService
+from app.services.user_service import UserService
 
 __all__ = [
+    "AuthService",
+    "EmailAlreadyRegisteredError",
     "EventLogService",
+    "InvalidCredentialsError",
     "MessageService",
     "ModelCallService",
     "RunService",
     "SessionService",
+    "UserService",
 ]
