@@ -6,6 +6,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    app_name: str = Field(default="Rotom Agent", alias="APP_NAME")
+    jwt_secret_key: str = Field(default="rotom-dev-secret-change-me", alias="JWT_SECRET_KEY")
+    access_token_expire_minutes: int = Field(default=1440, alias="ACCESS_TOKEN_EXPIRE_MINUTES")
     database_url: str = Field(alias="DATABASE_URL")
     rabbitmq_url: str = Field(alias="RABBITMQ_URL")
     rabbitmq_queue: str = Field(alias="RABBITMQ_QUEUE")
@@ -13,6 +16,7 @@ class Settings(BaseSettings):
     zhipu_base_url: str = Field(alias="ZHIPU_BASE_URL")
     zhipu_model: str = Field(alias="ZHIPU_MODEL")
     workspace_root: Path = Field(alias="WORKSPACE_ROOT")
+    host_workspace_root: Path | None = Field(default=None, alias="HOST_WORKSPACE_ROOT")
 
     model_config = SettingsConfigDict(
         env_file=".env",

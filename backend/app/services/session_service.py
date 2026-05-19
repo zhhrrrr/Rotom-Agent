@@ -1,3 +1,4 @@
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Session as SessionModel
@@ -11,9 +12,18 @@ class SessionService:
         # Service 不自己创建连接，只使用外部传进来的 session，方便统一管理事务和测试。
         self.db = db
 
-    async def create_session(self, title: str = "New Session") -> SessionModel:
+    async def create_session(
+        self,
+        user_id: str,
+        workspace_id: str,
+        title: str = "New Session",
+    ) -> SessionModel:
         # 创建 ORM 对象。此时它还只在 Python 内存里，没有真正写进数据库。
-        session = SessionModel(title=title)
+        session = SessionModel(
+            title=title,
+            user_id=user_id,
+            workspace_id=workspace_id,
+        )
         # add() 把对象加入当前数据库会话，等待提交。
         self.db.add(session)
         # commit() 提交事务，真正 INSERT 到数据库。
@@ -26,3 +36,20 @@ class SessionService:
         # db.get(Model, primary_key) 是按主键查询的快捷写法。
         # 查不到时返回 None。
         return await self.db.get(SessionModel, session_id)
+
+    async def get_owned_session(
+        self,
+        user_id: str,
+        workspace_id: str,
+        session_id: str,
+    ) -> SessionModel | None:
+        # v1 不能只按 session_id 查。
+        # session_id 本身不是权限证明，必须同时确认它属于当前 user 和 workspace。
+        result = await self.db.execute(
+            select(SessionModel).where(
+                SessionModel.id == session_id,
+                SessionModel.user_id == user_id,
+                SessionModel.workspace_id == workspace_id,
+            )
+        )
+        return result.scalars().first()

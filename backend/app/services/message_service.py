@@ -1,7 +1,7 @@
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Message
+from app.db.models import DEFAULT_USER_ID, DEFAULT_WORKSPACE_ID, Message
 
 
 # MessageService 负责 messages 表。
@@ -17,6 +17,9 @@ class MessageService:
         session_id: str,
         content: str,
         run_id: str | None = None,
+        user_id: str = DEFAULT_USER_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
+        meta: dict | None = None,
     ) -> Message:
         # 用户消息固定 role="user"。
         return await self._save_message(
@@ -24,6 +27,9 @@ class MessageService:
             run_id=run_id,
             role="user",
             content=content,
+            user_id=user_id,
+            workspace_id=workspace_id,
+            meta=meta,
         )
 
     async def save_assistant_message(
@@ -31,6 +37,9 @@ class MessageService:
         session_id: str,
         content: str,
         run_id: str | None = None,
+        user_id: str = DEFAULT_USER_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
+        meta: dict | None = None,
     ) -> Message:
         # 模型最终回答固定 role="assistant"。
         return await self._save_message(
@@ -38,6 +47,9 @@ class MessageService:
             run_id=run_id,
             role="assistant",
             content=content,
+            user_id=user_id,
+            workspace_id=workspace_id,
+            meta=meta,
         )
 
     async def list_session_messages(self, session_id: str) -> list[Message]:
@@ -58,14 +70,20 @@ class MessageService:
         role: str,
         content: str,
         run_id: str | None = None,
+        user_id: str = DEFAULT_USER_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
+        meta: dict | None = None,
     ) -> Message:
         # 私有方法：把 user/assistant 的公共保存逻辑集中到一处。
         # Python 里以下划线开头表示“内部使用”，不是语法强制。
         message = Message(
+            user_id=user_id,
+            workspace_id=workspace_id,
             session_id=session_id,
             run_id=run_id,
             role=role,
             content=content,
+            meta=meta or {},
         )
         # add -> commit -> refresh 是创建一条 ORM 数据的常见三步。
         self.db.add(message)

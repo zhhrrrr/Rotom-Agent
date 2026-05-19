@@ -1,46 +1,21 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.logging import get_logger
+from app.core.deps import get_current_user
 from app.db.database import get_session
-from app.db.models import Message
-from app.queue.producer import publish_run
-from app.services import MessageService, RunService, SessionService
+from app.db.models import EventLog, Message, ModelCall, Run, ToolCall, User
+from app.gateway import GatewayService
+from app.schemas import ChatRequest, ChatResponse, RunDebugResponse
+from app.services import RunService
 
 
 # APIRouter 是 FastAPI 的“路由分组”。
 # prefix="/api" 表示这个文件里的接口都会以 /api 开头。
 # tags=["chat"] 会让 Swagger 文档里把这些接口归到 chat 分组。
 router = APIRouter(prefix="/api", tags=["chat"])
-logger = get_logger(__name__)
-
-
-# Pydantic 模型用于描述请求体。
-# FastAPI 会自动用它校验 JSON 请求，并生成 Swagger 文档。
-class ChatRequest(BaseModel):
-    # Field(min_length=1) 表示 message 不能为空字符串。
-    message: str = Field(min_length=1)
-    # session_id 可选：不传就创建新会话；传了就继续已有会话。
-    session_id: str | None = None
-
-
-# 响应模型用于规定接口返回给前端/调用方的 JSON 结构。
-class ChatResponse(BaseModel):
-    session_id: str
-    run_id: str
-    status: str
-
-
-class RunResponse(BaseModel):
-    run_id: str
-    session_id: str
-    status: str
-    error: str | None
-    answer: str | None
 
 
 # POST /api/chat
@@ -57,94 +32,130 @@ async def create_chat_run(
     # 每次请求进来时，FastAPI 会调用 get_session() 创建 AsyncSession，
     # 然后把 db 传进这个函数；请求结束后 session 会自动关闭。
     db: Annotated[AsyncSession, Depends(get_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
 ) -> ChatResponse:
-    # Service 层封装数据库操作，API 层只编排业务流程。
-    session_service = SessionService(db)
-    message_service = MessageService(db)
-    run_service = RunService(db)
-
-    if request.session_id is None:
-        # 没传 session_id，说明这是一个新会话。
-        # title 暂时用用户消息前 50 个字符，后续可以让模型总结标题。
-        session = await session_service.create_session(
-            title=request.message[:50],
-        )
-    else:
-        # 传了 session_id，就先确认这个会话确实存在。
-        session = await session_service.get_session(request.session_id)
-        if session is None:
-            raise HTTPException(status_code=404, detail="Session not found")
-
-    # 并发控制：同一个 Session 同一时间只允许一个 queued/running Run。
-    # 全局并发交给 Worker 数量和 RabbitMQ prefetch_count 控制。
-    active_run = await run_service.get_active_run(session.id)
-    if active_run is not None:
-        raise HTTPException(
-            status_code=409,
-            detail="current session already has a running run",
-        )
-
-    # 每次用户提交消息，都创建一个新的 Run。
-    # queued 表示任务已入库，等待 Worker 消费 RabbitMQ 后执行。
-    run = await run_service.create_run(
-        session_id=session.id,
-        user_input=request.message,
-        status="queued",
-    )
-    logger.info("API created run run_id=%s session_id=%s", run.id, session.id)
-    # 保存 user message 到 PostgreSQL。
-    # RabbitMQ 只传 run_id；Worker 之后会用 run_id 回数据库查完整上下文。
-    await message_service.save_user_message(
-        session_id=session.id,
-        run_id=run.id,
-        content=request.message,
-    )
-    # 把 run_id 投递到 RabbitMQ，让 Worker 后台异步执行。
-    await publish_run(run.id)
-    logger.info("API queued run run_id=%s session_id=%s", run.id, session.id)
-
-    # 立即返回 queued，不等待模型执行。
-    # 这样 HTTP 请求不会被长时间阻塞。
-    return ChatResponse(
-        session_id=session.id,
-        run_id=run.id,
-        status=run.status,
-    )
-
-    '''
-    接收用户聊天请求 → 
-    创建/复用 Session → 
-    创建 Run → 
-    保存用户消息 → 
-    投递 RabbitMQ → 
-    立即返回 queued 状态。
-    '''
+    gateway = GatewayService(db)
+    return await gateway.handle_chat(current_user, request)
 
 
-@router.get("/runs/{run_id}", response_model=RunResponse)
+@router.get("/runs/{run_id}", response_model=RunDebugResponse)
 async def get_run_result(
     run_id: str,
     db: Annotated[AsyncSession, Depends(get_session)],
-) -> RunResponse:
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> RunDebugResponse:
     run_service = RunService(db)
     run = await run_service.get_run(run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
+    if run.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Run not found")
 
-    # 最终回答保存在 messages 表，role=assistant，且属于当前 run_id。
-    # 如果 Worker 还没跑完，这里会返回 answer=None，status 可能还是 queued/running。
+    messages = await _list_by_run(db, Message, run_id)
+    tool_calls = await _list_by_run(db, ToolCall, run_id)
+    model_calls = await _list_by_run(db, ModelCall, run_id)
+    event_logs = await _list_by_run(db, EventLog, run_id)
+
+    return RunDebugResponse(
+        run=_serialize_run(run),
+        messages=[_serialize_message(message) for message in messages],
+        tool_calls=[_serialize_tool_call(tool_call) for tool_call in tool_calls],
+        model_calls=[_serialize_model_call(model_call) for model_call in model_calls],
+        event_logs=[_serialize_event_log(event_log) for event_log in event_logs],
+    )
+
+
+async def _list_by_run(
+    db: AsyncSession,
+    model: type[Message] | type[ToolCall] | type[ModelCall] | type[EventLog],
+    run_id: str,
+) -> list:
     result = await db.execute(
-        select(Message)
-        .where(Message.run_id == run_id, Message.role == "assistant")
-        .order_by(Message.created_at.desc())
-        .limit(1)
+        select(model).where(model.run_id == run_id).order_by(model.created_at.asc())
     )
-    assistant_message = result.scalars().first()
+    return list(result.scalars().all())
 
-    return RunResponse(
-        run_id=run.id,
-        session_id=run.session_id,
-        status=run.status,
-        error=run.error,
-        answer=assistant_message.content if assistant_message else None,
-    )
+
+def _serialize_run(run: Run) -> dict:
+    return {
+        "id": run.id,
+        "user_id": run.user_id,
+        "workspace_id": run.workspace_id,
+        "session_id": run.session_id,
+        "user_input": run.user_input,
+        "status": run.status,
+        "current_step": run.current_step,
+        "retry_count": run.retry_count,
+        "error": run.error,
+        "started_at": run.started_at,
+        "finished_at": run.finished_at,
+        "created_at": run.created_at,
+        "updated_at": run.updated_at,
+    }
+
+
+def _serialize_message(message: Message) -> dict:
+    return {
+        "id": message.id,
+        "user_id": message.user_id,
+        "workspace_id": message.workspace_id,
+        "session_id": message.session_id,
+        "run_id": message.run_id,
+        "role": message.role,
+        "content": message.content,
+        "meta": message.meta,
+        "created_at": message.created_at,
+    }
+
+
+def _serialize_tool_call(tool_call: ToolCall) -> dict:
+    return {
+        "id": tool_call.id,
+        "user_id": tool_call.user_id,
+        "workspace_id": tool_call.workspace_id,
+        "run_id": tool_call.run_id,
+        "tool_name": tool_call.tool_name,
+        "tool_args": tool_call.tool_args,
+        "tool_result": tool_call.tool_result,
+        "status": tool_call.status,
+        "runtime_type": tool_call.runtime_type,
+        "risk_level": tool_call.risk_level,
+        "error": tool_call.error,
+        "created_at": tool_call.created_at,
+        "finished_at": tool_call.finished_at,
+    }
+
+
+def _serialize_model_call(model_call: ModelCall) -> dict:
+    return {
+        "id": model_call.id,
+        "user_id": model_call.user_id,
+        "workspace_id": model_call.workspace_id,
+        "session_id": model_call.session_id,
+        "run_id": model_call.run_id,
+        "provider": model_call.provider,
+        "model": model_call.model,
+        "request_messages": model_call.request_messages,
+        "request_tools": model_call.request_tools,
+        "response_message": model_call.response_message,
+        "prompt_tokens": model_call.prompt_tokens,
+        "completion_tokens": model_call.completion_tokens,
+        "latency_ms": model_call.latency_ms,
+        "status": model_call.status,
+        "error": model_call.error,
+        "created_at": model_call.created_at,
+    }
+
+
+def _serialize_event_log(event_log: EventLog) -> dict:
+    return {
+        "id": event_log.id,
+        "user_id": event_log.user_id,
+        "workspace_id": event_log.workspace_id,
+        "session_id": event_log.session_id,
+        "run_id": event_log.run_id,
+        "event_type": event_log.event_type,
+        "message": event_log.message,
+        "payload": event_log.payload,
+        "created_at": event_log.created_at,
+    }

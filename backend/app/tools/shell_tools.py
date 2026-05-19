@@ -51,16 +51,18 @@ DANGEROUS_TOKENS = {
 }
 
 
-def _workspace_root() -> Path:
+def _workspace_root(workspace_root: str | None = None) -> Path:
     # 命令执行目录固定在 WORKSPACE_ROOT。
     # 这样 pwd/ls/cat 默认都围绕工作区运行，而不是围绕项目代码目录或系统目录运行。
+    if workspace_root is not None:
+        return Path(workspace_root).resolve()
     return settings.workspace_root.resolve()
 
 
-def _resolve_workspace_path(path: str) -> Path:
+def _resolve_workspace_path(path: str, workspace_root: str | None = None) -> Path:
     # cat/ls 带路径参数时，也必须限制在 WORKSPACE_ROOT 内。
     # 这和 file_tools.py 的路径安全逻辑是一致的。
-    root = _workspace_root()
+    root = _workspace_root(workspace_root)
     raw_path = Path(path)
 
     # 绝对路径例如 /etc/passwd 不允许。
@@ -99,7 +101,7 @@ def _validate_no_shell_syntax(parts: list[str]) -> None:
             raise ValueError(f"Dangerous shell syntax is not allowed: {part}")
 
 
-def _build_allowed_command(command: str) -> list[str]:
+def _build_allowed_command(command: str, workspace_root: str | None = None) -> list[str]:
     # shlex.split 负责把命令字符串拆成参数列表。
     # 例如 "python --version" -> ["python", "--version"]。
     # 后面 subprocess.run 会直接接收 list，不通过 shell 执行。
@@ -135,7 +137,7 @@ def _build_allowed_command(command: str) -> list[str]:
             raise ValueError("ls only supports zero or one path argument")
         if len(parts) == 2:
             # 如果 ls 带路径，也必须是工作区内的相对路径。
-            _resolve_workspace_path(parts[1])
+            _resolve_workspace_path(parts[1], workspace_root)
         return parts
 
     if command_name == "cat":
@@ -144,7 +146,7 @@ def _build_allowed_command(command: str) -> list[str]:
         if len(parts) != 2:
             raise ValueError("cat only supports exactly one file path")
 
-        target = _resolve_workspace_path(parts[1])
+        target = _resolve_workspace_path(parts[1], workspace_root)
         if not target.is_file():
             raise ValueError(f"Not a file: {parts[1]}")
         return parts
@@ -152,13 +154,13 @@ def _build_allowed_command(command: str) -> list[str]:
     raise ValueError(f"Command is not allowed: {command_name}")
 
 
-def run_shell(command: str) -> dict[str, Any]:
+def run_shell(command: str, workspace_root: str | None = None) -> dict[str, Any]:
     """执行低风险白名单命令。
 
     第一版不是开放任意 shell，而是只允许少量只读/查询类命令。
     """
 
-    parts = _build_allowed_command(command)
+    parts = _build_allowed_command(command, workspace_root)
 
     try:
         # 重点：这里没有 shell=True。
@@ -168,7 +170,7 @@ def run_shell(command: str) -> dict[str, Any]:
             parts,
             # cwd 固定为工作区根目录。
             # 所以 pwd 返回 WORKSPACE_ROOT，ls/cat 默认也从工作区看。
-            cwd=_workspace_root(),
+            cwd=_workspace_root(workspace_root),
             capture_output=True,
             # text=True 表示 stdout/stderr 返回 str，而不是 bytes。
             text=True,
