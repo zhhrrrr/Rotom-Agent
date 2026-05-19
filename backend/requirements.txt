@@ -1,0 +1,18 @@
+fastapi==0.116.1
+pydantic-settings==2.12.0
+sqlalchemy==2.0.36
+
+# PostgreSQL 异步数据库驱动
+# 用于 SQLAlchemy / SQLModel 的异步连接：
+# postgresql+asyncpg://user:password@host:port/database
+asyncpg==0.30.0
+
+# RabbitMQ 异步消息队列客户端
+# 用于 FastAPI / Worker 与 RabbitMQ 通信，发布任务、消费任务
+aio-pika==9.5.7
+
+# OpenAI 兼容 SDK
+# 智谱 GLM 的接口兼容 OpenAI Chat Completions，所以这里用 AsyncOpenAI 调用。
+openai==2.37.0
+
+uvicorn[standard]==0.35.0
