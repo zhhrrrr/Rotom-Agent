@@ -1,7 +1,7 @@
 import { defineStore } from "pinia";
 import { computed, ref } from "vue";
 
-import { getMe, login, UserResponse } from "@/api/auth";
+import { getMe, login, register, UserResponse } from "@/api/auth";
 import { getAccessToken, setAccessToken } from "@/api/http";
 
 export const useAuthStore = defineStore("auth", () => {
@@ -23,11 +23,35 @@ export const useAuthStore = defineStore("auth", () => {
     }
   }
 
+  async function signUp(
+    email: string,
+    password: string,
+    displayName: string,
+  ): Promise<void> {
+    loading.value = true;
+    try {
+      const response = await register({
+        email,
+        password,
+        display_name: displayName,
+      });
+      token.value = response.access_token;
+      setAccessToken(response.access_token);
+      user.value = await getMe();
+    } finally {
+      loading.value = false;
+    }
+  }
+
   async function loadCurrentUser(): Promise<void> {
     if (!token.value) {
       return;
     }
-    user.value = await getMe();
+    try {
+      user.value = await getMe();
+    } catch {
+      signOut();
+    }
   }
 
   function signOut(): void {
@@ -42,6 +66,7 @@ export const useAuthStore = defineStore("auth", () => {
     loading,
     isAuthenticated,
     signIn,
+    signUp,
     loadCurrentUser,
     signOut,
   };

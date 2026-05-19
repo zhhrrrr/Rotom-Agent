@@ -29,6 +29,7 @@ export const useChatStore = defineStore("chat", () => {
   const lastChunkIndex = ref(-1);
   const sending = ref(false);
   const streamError = ref<string | null>(null);
+  const sendError = ref<string | null>(null);
   const subscription = ref<RunStreamSubscription | null>(null);
 
   const assistantMessage = computed(() =>
@@ -43,6 +44,7 @@ export const useChatStore = defineStore("chat", () => {
 
     sending.value = true;
     streamError.value = null;
+    sendError.value = null;
     messages.value.push({
       id: crypto.randomUUID(),
       role: "user",
@@ -67,6 +69,12 @@ export const useChatStore = defineStore("chat", () => {
       runStatus.value = response.status;
       lastChunkIndex.value = -1;
       startRunStream(response.run_id);
+    } catch (error) {
+      sendError.value = error instanceof Error ? error.message : "Send failed";
+      pendingAssistant.content = sendError.value;
+      pendingAssistant.running = false;
+      runStatus.value = "failed";
+      throw error;
     } finally {
       sending.value = false;
     }
@@ -141,7 +149,11 @@ export const useChatStore = defineStore("chat", () => {
   }
 
   async function refreshRun(runId: string): Promise<void> {
-    await getRunDebug(runId);
+    try {
+      await getRunDebug(runId);
+    } catch (error) {
+      streamError.value = error instanceof Error ? error.message : "Refresh failed";
+    }
   }
 
   function createAssistantMessage(running: boolean): ChatMessage {
@@ -168,6 +180,20 @@ export const useChatStore = defineStore("chat", () => {
     return tools.value.find((tool) => tool.id === id) ?? tools.value.at(-1);
   }
 
+  function reset(): void {
+    subscription.value?.close();
+    subscription.value = null;
+    sessionId.value = null;
+    activeRunId.value = null;
+    runStatus.value = "idle";
+    messages.value = [];
+    tools.value = [];
+    lastChunkIndex.value = -1;
+    sending.value = false;
+    streamError.value = null;
+    sendError.value = null;
+  }
+
   return {
     sessionId,
     activeRunId,
@@ -177,8 +203,10 @@ export const useChatStore = defineStore("chat", () => {
     lastChunkIndex,
     sending,
     streamError,
+    sendError,
     sendMessage,
     handleChunk,
     refreshRun,
+    reset,
   };
 });

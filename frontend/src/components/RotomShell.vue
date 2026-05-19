@@ -5,7 +5,7 @@
         <RotomIcon class="brand-icon" />
         <div>
           <h1>Rotom Agent</h1>
-          <p>Electric companion dashboard</p>
+          <p>Pixel companion</p>
         </div>
       </div>
       <slot name="sidebar" />

@@ -1,18 +1,23 @@
 :root {
   --rotom-orange: #ff6a2a;
-  --rotom-orange-soft: #ff9a52;
+  --rotom-orange-dark: #c84218;
   --electric-cyan: #2bd9fe;
-  --electric-cyan-soft: #a6f4ff;
+  --electric-blue: #2388ff;
   --plasma-purple: #6b3af2;
   --rotom-dark: #1b1b2f;
-  --rotom-ink: #151528;
+  --game-navy: #23294f;
+  --game-cream: #fff6d7;
+  --game-paper: #f7f0c6;
+  --game-brown: #4b3526;
   --energy-yellow: #ffe66d;
+  --pixel-red: #e84f4f;
+  --pixel-green: #42b96d;
   --panel-light: #f7fafc;
-  --panel-glass: rgba(255, 255, 255, 0.12);
-  --text-main: #f8fbff;
-  --text-muted: #b7c4df;
-  --border-glow: rgba(43, 217, 254, 0.42);
-  --shadow-glow: 0 0 28px rgba(43, 217, 254, 0.24);
-  --radius-card: 8px;
-  --font-ui: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --text-main: #2b2230;
+  --text-invert: #fffaf0;
+  --text-muted: #6d5f72;
+  --pixel-border: #2a2340;
+  --pixel-shadow: #151528;
+  --radius-card: 0;
+  --font-ui: "Courier New", "Lucida Console", Monaco, monospace;
 }

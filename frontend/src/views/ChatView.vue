@@ -21,7 +21,7 @@
       :tools="chat.tools"
       :status="chat.runStatus"
       :disabled="chat.sending || !workspace.activeWorkspaceId"
-      :error="chat.streamError"
+      :error="chat.streamError || chat.sendError"
       @send="send"
     />
   </RotomShell>
@@ -54,6 +54,7 @@ async function send(message: string): Promise<void> {
 }
 
 async function logout(): Promise<void> {
+  chat.reset();
   auth.signOut();
   await router.push({ name: "login" });
 }
