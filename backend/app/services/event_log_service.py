@@ -1,13 +1,15 @@
 from typing import Any
 
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.db.models import DEFAULT_USER_ID, DEFAULT_WORKSPACE_ID, EventLog
+from app.services.trace_service import TraceService
 
 
-class EventLogService:
-    def __init__(self, db: AsyncSession) -> None:
-        self.db = db
+class EventLogService(TraceService):
+    """Backward-compatible wrapper around TraceService.
+
+    Existing Gateway, Worker, and Orchestrator code can keep calling record().
+    New code should prefer TraceService.log().
+    """
 
     async def record(
         self,
@@ -19,16 +21,12 @@ class EventLogService:
         run_id: str | None = None,
         payload: dict[str, Any] | None = None,
     ) -> EventLog:
-        event = EventLog(
+        return await self.log(
+            event_type=event_type,
             user_id=user_id,
             workspace_id=workspace_id,
             session_id=session_id,
             run_id=run_id,
-            event_type=event_type,
             message=message,
             payload=payload,
         )
-        self.db.add(event)
-        await self.db.commit()
-        await self.db.refresh(event)
-        return event

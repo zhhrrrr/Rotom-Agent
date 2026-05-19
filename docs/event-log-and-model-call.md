@@ -5,6 +5,8 @@
 ## 总览
 
 - `event_logs` 记录一次 run 从 API 接收到请求，到 worker 执行、模型调用、工具调用、最终完成或失败的关键流程节点。
+- `TraceService.log()` 是 `event_logs` 的统一写入入口，后续新增 trace 事件优先使用它。
+- `EventLogService.record()` 现在只是兼容旧调用方式的薄包装，Gateway、Worker、Orchestrator 可以先保持现有调用，不需要大规模改动。
 - `model_calls` 记录每一次真实模型请求。只要调用了模型，无论成功还是失败，都会写一条记录。
 - 一次 run 可能包含多次模型调用。例如模型第一轮要求调用工具，第二轮根据工具结果生成最终回答，就会写两条 `model_calls`。
 
@@ -21,7 +23,7 @@
 | `run.created` | 创建 `runs` 记录后 | 记录 run 已入库 |
 | `run.queued` | run_id 投递到 RabbitMQ 后 | 记录 run 已进入 worker 队列 |
 
-当前版本还没有真实登录网关；不传 `user_id` 和 `workspace_id` 时，会使用：
+当前版本已经接入 JWT 登录。少数早期兼容路径如果没有显式传入 `user_id` 或 `workspace_id`，`TraceService` 会回退到种子默认身份：
 
 - `user_default`
 - `workspace_default`
@@ -32,6 +34,7 @@
 
 | event_type | 记录时机 | 作用 |
 | --- | --- | --- |
+| `worker.run.received` | worker 收到 queued run 后 | 标记后台消费者已经接收任务 |
 | `run.started` | worker 拿到 run 并把状态改为 `running` 后 | 标记后台执行正式开始 |
 | `context.built` | `ContextBuilder` 拼好模型上下文后 | 记录发送给模型前的上下文构建完成 |
 | `model.call.started` | 每一轮模型调用前 | 标记即将请求模型，并记录 iteration |
@@ -92,19 +95,20 @@ response = await self.model_client.chat(messages=messages, tools=tools)
 4. `event_logs.session.resolved`
 5. `event_logs.run.created`
 6. `event_logs.run.queued`
-7. `event_logs.run.started`
-8. `event_logs.context.built`
-9. `event_logs.model.call.started`
-10. `model_calls(status="completed")`
-11. `event_logs.model.call.completed`
-12. `event_logs.tool.call.started`
-13. `tool_calls(status="completed")`
-14. `event_logs.tool.call.completed`
-15. `event_logs.model.call.started`
-16. `model_calls(status="completed")`
-17. `event_logs.model.call.completed`
-18. 保存 assistant message
-19. `event_logs.run.completed`
+7. `event_logs.worker.run.received`
+8. `event_logs.run.started`
+9. `event_logs.context.built`
+10. `event_logs.model.call.started`
+11. `model_calls(status="completed")`
+12. `event_logs.model.call.completed`
+13. `event_logs.tool.call.started`
+14. `tool_calls(status="completed")`
+15. `event_logs.tool.call.completed`
+16. `event_logs.model.call.started`
+17. `model_calls(status="completed")`
+18. `event_logs.model.call.completed`
+19. 保存 assistant message
+20. `event_logs.run.completed`
 
 这里会出现两条 `model_calls`：
 
