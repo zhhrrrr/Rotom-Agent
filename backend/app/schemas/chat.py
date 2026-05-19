@@ -1,3 +1,5 @@
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 
@@ -15,11 +17,9 @@ class ChatResponse(BaseModel):
     status: str
 
 
-class RunResponse(BaseModel):
-    run_id: str
-    user_id: str
-    workspace_id: str
-    session_id: str
-    status: str
-    error: str | None
-    answer: str | None
+class RunDebugResponse(BaseModel):
+    run: dict[str, Any]
+    messages: list[dict[str, Any]]
+    tool_calls: list[dict[str, Any]]
+    model_calls: list[dict[str, Any]]
+    event_logs: list[dict[str, Any]]

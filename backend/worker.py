@@ -11,7 +11,8 @@ from app.queue.rabbitmq import (
     get_rabbitmq_channel,
     get_rabbitmq_connection,
 )
-from app.services import EventLogService, RunService
+from app.services import RunService, TraceService
+from app.workers import recover_stale_running_runs
 
 setup_logging()
 logger = get_logger(__name__)
@@ -46,7 +47,7 @@ async def handle_message(message: AbstractIncomingMessage) -> None:
         # Worker 没有 FastAPI 的 Depends(get_session)，所以要手动创建数据库会话。
         async with AsyncSessionLocal() as db:
             run_service = RunService(db)
-            event_log_service = EventLogService(db)
+            trace_service = TraceService(db)
             run = await run_service.get_run(run_id)
             if run is None:
                 logger.warning("Worker ack missing run run_id=%s", run_id)
@@ -60,7 +61,7 @@ async def handle_message(message: AbstractIncomingMessage) -> None:
                 )
                 return
 
-            await event_log_service.record(
+            await trace_service.log(
                 event_type="worker.run.received",
                 message="Worker received run",
                 user_id=run.user_id,
@@ -74,7 +75,7 @@ async def handle_message(message: AbstractIncomingMessage) -> None:
                 "running",
                 current_step="run.started",
             )
-            await event_log_service.record(
+            await trace_service.log(
                 event_type="run.started",
                 message="Run started",
                 user_id=run.user_id,
@@ -94,7 +95,7 @@ async def handle_message(message: AbstractIncomingMessage) -> None:
             except Exception as exc:
                 logger.exception("Worker exception run_id=%s", run_id)
                 await run_service.update_status(run_id, "failed", error=str(exc))
-                await event_log_service.record(
+                await trace_service.log(
                     event_type="run.failed",
                     message=str(exc),
                     user_id=run.user_id,
@@ -109,6 +110,11 @@ async def run_worker() -> None:
     # 启动时先初始化数据库连接和表结构。
     # 如果数据库连不上，Worker 会直接启动失败，方便尽早发现问题。
     await init_db()
+
+    # Worker 崩溃可能让 run 卡在 running。
+    # 启动时先做一次轻量恢复：超过 30 分钟未更新的 running run 标记为 timeout。
+    async with AsyncSessionLocal() as db:
+        await recover_stale_running_runs(db)
 
     # Worker 主动连接 RabbitMQ，不需要对外暴露端口。
     connection = await get_rabbitmq_connection()

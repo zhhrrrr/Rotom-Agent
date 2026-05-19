@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     zhipu_base_url: str = Field(alias="ZHIPU_BASE_URL")
     zhipu_model: str = Field(alias="ZHIPU_MODEL")
     workspace_root: Path = Field(alias="WORKSPACE_ROOT")
+    host_workspace_root: Path | None = Field(default=None, alias="HOST_WORKSPACE_ROOT")
 
     model_config = SettingsConfigDict(
         env_file=".env",

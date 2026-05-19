@@ -55,9 +55,12 @@ services:
     container_name: rotom-worker
     env_file:
       - ../backend/.env
+    environment:
+      HOST_WORKSPACE_ROOT: ${HOST_WORKSPACE_ROOT:-${PWD}/storage/workspaces}
     command: python worker.py
     volumes:
       - ../storage:/app/storage
+      - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       postgres:
         condition: service_healthy

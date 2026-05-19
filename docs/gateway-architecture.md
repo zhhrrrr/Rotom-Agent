@@ -37,7 +37,7 @@ backend/app/schemas/chat.py
 | `gateway/request_context.py` | 在 Gateway 流程中传递 user、workspace、session、run 等上下文 |
 | `gateway/session_router.py` | 创建新 session 或校验并复用已有 session |
 | `gateway/run_router.py` | 检查 active run，并创建 queued run |
-| `schemas/chat.py` | 定义 `ChatRequest`、`ChatResponse`、`RunResponse` |
+| `schemas/chat.py` | 定义 `ChatRequest`、`ChatResponse`、`RunDebugResponse` |
 
 ## HTTP 入口
 

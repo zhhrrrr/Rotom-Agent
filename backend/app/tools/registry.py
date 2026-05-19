@@ -14,12 +14,18 @@ class ToolSpec:
     - name: 工具名
     - description: 工具用途
     - parameters: 工具参数的 JSON Schema
+    - risk_level: low / medium / high
+    - runtime_type: local / docker
+    - enabled: 是否开放给模型和 Broker
     """
 
     name: str
     description: str
     parameters: dict[str, Any]
     handler: Callable[..., Any]
+    risk_level: str
+    runtime_type: str
+    enabled: bool = True
 
     def to_openai_tool(self) -> dict[str, Any]:
         # OpenAI-compatible tools schema 固定是这个外层结构。
@@ -59,7 +65,8 @@ class ToolRegistry:
 
     def openai_tools(self) -> list[dict[str, Any]]:
         # 把内部 ToolSpec 列表转成模型 API 需要的 tools 参数。
-        return [tool.to_openai_tool() for tool in self._tools.values()]
+        # disabled 工具不暴露给模型，避免模型主动选择它。
+        return [tool.to_openai_tool() for tool in self._tools.values() if tool.enabled]
 
 
 tool_registry = ToolRegistry()
@@ -70,6 +77,8 @@ tool_registry.register(
         name="list_dir",
         description="列出工作区中指定目录下的文件和子目录。",
         handler=list_dir,
+        risk_level="low",
+        runtime_type="local",
         parameters={
             "type": "object",
             "properties": {
@@ -90,6 +99,8 @@ tool_registry.register(
         name="read_file",
         description="读取工作区中的文本文件内容。",
         handler=read_file,
+        risk_level="low",
+        runtime_type="local",
         parameters={
             "type": "object",
             "properties": {
@@ -110,6 +121,8 @@ tool_registry.register(
         name="write_file",
         description="向工作区内写入文本文件。风险等级 medium。会自动创建父目录。",
         handler=write_file,
+        risk_level="medium",
+        runtime_type="local",
         parameters={
             "type": "object",
             "properties": {
@@ -134,9 +147,11 @@ tool_registry.register(
         name="run_shell",
         description=(
             "执行低风险白名单命令。第一版只允许 pwd、ls、cat、"
-            "python --version、pip --version。风险等级 medium。"
+            "python --version、pip --version。风险等级 high，必须经过 DockerRuntime 策略。"
         ),
         handler=run_shell,
+        risk_level="high",
+        runtime_type="docker",
         parameters={
             "type": "object",
             "properties": {

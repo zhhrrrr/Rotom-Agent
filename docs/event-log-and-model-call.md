@@ -6,7 +6,7 @@
 
 - `event_logs` 记录一次 run 从 API 接收到请求，到 worker 执行、模型调用、工具调用、最终完成或失败的关键流程节点。
 - `TraceService.log()` 是 `event_logs` 的统一写入入口，后续新增 trace 事件优先使用它。
-- `EventLogService.record()` 现在只是兼容旧调用方式的薄包装，Gateway、Worker、Orchestrator 可以先保持现有调用，不需要大规模改动。
+- Gateway、Worker、Orchestrator 已直接使用 `TraceService.log()` 写事件。
 - `model_calls` 记录每一次真实模型请求。只要调用了模型，无论成功还是失败，都会写一条记录。
 - 一次 run 可能包含多次模型调用。例如模型第一轮要求调用工具，第二轮根据工具结果生成最终回答，就会写两条 `model_calls`。
 
@@ -39,8 +39,10 @@
 | `context.built` | `ContextBuilder` 拼好模型上下文后 | 记录发送给模型前的上下文构建完成 |
 | `model.call.started` | 每一轮模型调用前 | 标记即将请求模型，并记录 iteration |
 | `model.call.completed` | 每一轮模型调用成功后 | 标记模型返回成功，并记录 iteration 和 latency |
-| `tool.call.started` | 模型返回 tool_calls 后，每个工具执行前 | 记录即将调用哪个工具和参数 |
-| `tool.call.completed` | 每个工具执行结束后 | 记录工具是否执行成功 |
+| `model.call.failed` | 每一轮模型调用失败后 | 标记模型调用失败，并记录 iteration、latency 和错误 |
+| `tool.call.started` | ToolBroker 创建 `tool_calls(status="running")` 后 | 记录即将调用哪个工具、参数、runtime 和 risk |
+| `tool.call.completed` | 工具执行成功后 | 记录工具执行成功 |
+| `tool.call.failed` | 工具不存在、禁用、权限拒绝或执行异常后 | 记录工具失败原因 |
 | `run.completed` | 模型给出最终回答、assistant message 保存后 | 标记 run 成功完成 |
 | `run.failed` | 超过最大轮数或捕获异常后 | 标记 run 失败，并保存错误信息 |
 
@@ -51,14 +53,27 @@
 每次执行：
 
 ```python
-response = await self.model_client.chat(messages=messages, tools=tools)
+response = await self.model_client.chat(
+    messages=messages,
+    tools=tools,
+    user_id=run.user_id,
+    workspace_id=run.workspace_id,
+    session_id=run.session_id,
+    run_id=run.id,
+)
 ```
 
 都会产生一条 `model_calls`。
 
+当前职责边界是：
+
+- `AgentOrchestrator` 负责决定什么时候调用模型，并传入 `user_id`、`workspace_id`、`session_id`、`run_id`。
+- `ZhipuModelClient` 负责计时、调用智谱模型、保存 `model_calls` 成功/失败记录。
+- `ModelCallService` 只负责把已经整理好的记录写入数据库。
+
 ### 成功时
 
-模型正常返回后，写入一条 `status="completed"` 的 `model_calls`，包含：
+`ZhipuModelClient` 调用模型正常返回后，写入一条 `status="completed"` 的 `model_calls`，包含：
 
 - `user_id`
 - `workspace_id`
@@ -76,14 +91,14 @@ response = await self.model_client.chat(messages=messages, tools=tools)
 
 ### 失败时
 
-模型请求抛异常时，写入一条 `status="failed"` 的 `model_calls`，包含：
+`ZhipuModelClient` 调用模型抛异常时，写入一条 `status="failed"` 的 `model_calls`，包含：
 
 - 本次发送给模型的 `request_messages`
 - 本次发送给模型的 `request_tools`
 - 已经计算出的 `latency_ms`
 - `error`
 
-之后异常会继续抛出，由外层把 run 标记为 `failed`，并写入 `event_logs.run.failed`。
+之后异常会继续抛出，由 Orchestrator 外层把 run 标记为 `failed`，并写入 `event_logs.run.failed`。
 
 ## 一次典型工具型 run 的记录顺序
 
@@ -101,14 +116,15 @@ response = await self.model_client.chat(messages=messages, tools=tools)
 10. `event_logs.model.call.started`
 11. `model_calls(status="completed")`
 12. `event_logs.model.call.completed`
-13. `event_logs.tool.call.started`
-14. `tool_calls(status="completed")`
-15. `event_logs.tool.call.completed`
-16. `event_logs.model.call.started`
-17. `model_calls(status="completed")`
-18. `event_logs.model.call.completed`
-19. 保存 assistant message
-20. `event_logs.run.completed`
+13. `tool_calls(status="running")`
+14. `event_logs.tool.call.started`
+15. `tool_calls(status="completed")`
+16. `event_logs.tool.call.completed`
+17. `event_logs.model.call.started`
+18. `model_calls(status="completed")`
+19. `event_logs.model.call.completed`
+20. 保存 assistant message
+21. `event_logs.run.completed`
 
 这里会出现两条 `model_calls`：
 
