@@ -1,4 +1,5 @@
 import json
+import re
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -7,7 +8,7 @@ from app.agent.context_builder import ContextBuilder
 from app.agent.zhipu_model_client import ZhipuModelClient
 from app.core.logging import get_logger
 from app.db.models import Session, User, Workspace
-from app.services import MessageService, RunService, TraceService
+from app.services import ChunkService, MessageService, RunService, TraceService
 from app.tools import ToolBroker, tool_registry
 
 logger = get_logger(__name__)
@@ -48,6 +49,7 @@ class AgentOrchestrator:
         run_service = RunService(self.db)
         message_service = MessageService(self.db)
         trace_service = TraceService(self.db)
+        chunk_service = ChunkService(self.db)
 
         # RabbitMQ 里只保存 run_id，所以 Worker 消费后要先回 PostgreSQL 查完整 Run。
         run = await run_service.get_run(run_id)
@@ -68,6 +70,13 @@ class AgentOrchestrator:
                 session is not None,
             )
             await run_service.update_status(run_id, "failed", error=error)
+            await chunk_service.append_run_chunk(
+                run,
+                chunk_type="error",
+                content=error,
+                payload={"stage": "context"},
+                is_final=True,
+            )
             await trace_service.log(
                 event_type="run.failed",
                 message=error,
@@ -79,6 +88,12 @@ class AgentOrchestrator:
             return None
 
         try:
+            await chunk_service.append_run_chunk(
+                run,
+                chunk_type="status",
+                content="running",
+                payload={"status": "running", "current_step": "run.started"},
+            )
             # ContextBuilder 负责把 system prompt + 最近历史消息拼成模型 messages。
             # 这里拿到的 messages 会随着工具调用不断追加内容。
             messages = await ContextBuilder(self.db).build(
@@ -118,6 +133,16 @@ class AgentOrchestrator:
                     "running",
                     current_step="model.call.started",
                 )
+                await chunk_service.append_run_chunk(
+                    run,
+                    chunk_type="status",
+                    content="model_call_started",
+                    payload={
+                        "status": "running",
+                        "current_step": "model.call.started",
+                        "iteration": iteration,
+                    },
+                )
                 await trace_service.log(
                     event_type="model.call.started",
                     message="Model call started",
@@ -138,6 +163,17 @@ class AgentOrchestrator:
                     )
                 except Exception as exc:
                     latency_ms = getattr(self.model_client, "last_latency_ms", None)
+                    await chunk_service.append_run_chunk(
+                        run,
+                        chunk_type="error",
+                        content=str(exc),
+                        payload={
+                            "stage": "model_call",
+                            "iteration": iteration,
+                            "latency_ms": latency_ms,
+                        },
+                        is_final=True,
+                    )
                     await trace_service.log(
                         event_type="model.call.failed",
                         message=str(exc),
@@ -238,6 +274,14 @@ class AgentOrchestrator:
                 # 这时保存 assistant message，并把 Run 标记为 completed。
                 # 存储工具记录的逻辑在broker中
                 content = assistant_message.content or ""
+                for piece in self._split_content(content):
+                    await chunk_service.append_run_chunk(
+                        run,
+                        chunk_type="message_delta",
+                        role="assistant",
+                        content=piece,
+                        payload={"model": self.model_client.model},
+                    )
                 await message_service.save_assistant_message(
                     session_id=run.session_id,
                     run_id=run_id,
@@ -245,6 +289,14 @@ class AgentOrchestrator:
                     user_id=run.user_id,
                     workspace_id=run.workspace_id,
                     meta={"model": self.model_client.model},
+                )
+                await chunk_service.append_run_chunk(
+                    run,
+                    chunk_type="message_final",
+                    role="assistant",
+                    content="",
+                    payload={"model": self.model_client.model},
+                    is_final=True,
                 )
                 await run_service.update_status(run_id, "completed")
                 await trace_service.log(
@@ -260,6 +312,13 @@ class AgentOrchestrator:
 
             error = f"Agent exceeded max_iterations={self.max_iterations}"
             await run_service.update_status(run_id, "failed", error=error)
+            await chunk_service.append_run_chunk(
+                run,
+                chunk_type="error",
+                content=error,
+                payload={"max_iterations": self.max_iterations},
+                is_final=True,
+            )
             await trace_service.log(
                 event_type="run.failed",
                 message=error,
@@ -277,6 +336,13 @@ class AgentOrchestrator:
             # 这样任务不会一直卡在 running，前端也能看到 error。
             logger.exception("Orchestrator exception run_id=%s", run_id)
             await run_service.update_status(run_id, "failed", error=str(exc))
+            await chunk_service.append_run_chunk(
+                run,
+                chunk_type="error",
+                content=str(exc),
+                payload={"stage": "orchestrator"},
+                is_final=True,
+            )
             await trace_service.log(
                 event_type="run.failed",
                 message=str(exc),
@@ -325,3 +391,28 @@ class AgentOrchestrator:
             raise ValueError("Tool arguments must be a JSON object")
 
         return parsed
+
+    def _split_content(self, content: str, max_piece_length: int = 120) -> list[str]:
+        if not content:
+            return []
+
+        pieces: list[str] = []
+        current = ""
+        for segment in re.split(r"([。！？.!?\n])", content):
+            if not segment:
+                continue
+            current += segment
+            if segment in {"。", "！", "？", ".", "!", "?", "\n"} or len(current) >= max_piece_length:
+                pieces.extend(self._split_long_piece(current, max_piece_length))
+                current = ""
+
+        if current:
+            pieces.extend(self._split_long_piece(current, max_piece_length))
+
+        return [piece for piece in pieces if piece]
+
+    def _split_long_piece(self, content: str, max_piece_length: int) -> list[str]:
+        return [
+            content[index : index + max_piece_length]
+            for index in range(0, len(content), max_piece_length)
+        ]

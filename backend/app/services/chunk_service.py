@@ -1,7 +1,9 @@
+from typing import Any
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import RunChunk
+from app.db.models import Run, RunChunk
 from app.schemas import RunChunkCreate
 
 
@@ -15,6 +17,29 @@ class ChunkService:
 
     def __init__(self, db: AsyncSession) -> None:
         self.db = db
+
+    async def append_run_chunk(
+        self,
+        run: Run,
+        chunk_type: str,
+        content: str = "",
+        role: str | None = None,
+        payload: dict[str, Any] | None = None,
+        is_final: bool = False,
+    ) -> RunChunk:
+        return await self.append_chunk(
+            RunChunkCreate(
+                run_id=run.id,
+                user_id=run.user_id,
+                workspace_id=run.workspace_id,
+                session_id=run.session_id,
+                chunk_type=chunk_type,
+                role=role,
+                content=content,
+                payload=payload,
+                is_final=is_final,
+            )
+        )
 
     async def append_chunk(self, chunk: RunChunkCreate) -> RunChunk:
         next_index = await self._next_chunk_index(chunk.run_id)
