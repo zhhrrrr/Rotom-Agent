@@ -4,10 +4,13 @@ from app.schemas.auth import (
     TokenResponse,
     UserResponse,
 )
+from app.schemas.workspace import CreateWorkspaceRequest, WorkspaceResponse
 
 __all__ = [
     "LoginRequest",
     "RegisterRequest",
     "TokenResponse",
     "UserResponse",
+    "CreateWorkspaceRequest",
+    "WorkspaceResponse",
 ]

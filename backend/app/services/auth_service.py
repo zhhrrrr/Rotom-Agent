@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.security import create_access_token, hash_password, verify_password
 from app.db.models import User, Workspace
 from app.services.user_service import UserService
+from app.services.workspace_service import WorkspaceService
 
 
 class AuthError(Exception):
@@ -21,6 +22,7 @@ class AuthService:
     def __init__(self, db: AsyncSession) -> None:
         self.db = db
         self.user_service = UserService(db)
+        self.workspace_service = WorkspaceService(db)
 
     async def register(
         self,
@@ -37,7 +39,7 @@ class AuthService:
             hashed_password=hash_password(password),
             display_name=display_name,
         )
-        workspace = await self.user_service.create_default_workspace(user)
+        workspace = await self.workspace_service.create_default_workspace(user.id)
         token = create_access_token(subject=user.id)
         return user, workspace, token
 

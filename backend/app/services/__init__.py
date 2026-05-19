@@ -9,6 +9,7 @@ from app.services.model_call_service import ModelCallService
 from app.services.run_service import RunService
 from app.services.session_service import SessionService
 from app.services.user_service import UserService
+from app.services.workspace_service import WorkspaceService
 
 __all__ = [
     "AuthService",
@@ -20,4 +21,5 @@ __all__ = [
     "RunService",
     "SessionService",
     "UserService",
+    "WorkspaceService",
 ]

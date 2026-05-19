@@ -10,7 +10,7 @@ from app.core.logging import get_logger
 from app.db.database import get_session
 from app.db.models import Message, User
 from app.queue.producer import publish_run
-from app.services import EventLogService, MessageService, RunService, SessionService, UserService
+from app.services import EventLogService, MessageService, RunService, SessionService, WorkspaceService
 
 
 # APIRouter 是 FastAPI 的“路由分组”。
@@ -69,11 +69,11 @@ async def create_chat_run(
     session_service = SessionService(db)
     message_service = MessageService(db)
     run_service = RunService(db)
-    user_service = UserService(db)
+    workspace_service = WorkspaceService(db)
     event_log_service = EventLogService(db)
 
-    workspace = await user_service.resolve_workspace(
-        user=current_user,
+    workspace = await workspace_service.resolve_workspace(
+        user_id=current_user.id,
         workspace_id=request.workspace_id,
     )
     if workspace is None:

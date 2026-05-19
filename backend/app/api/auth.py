@@ -11,7 +11,7 @@ from app.services import (
     AuthService,
     EmailAlreadyRegisteredError,
     InvalidCredentialsError,
-    UserService,
+    WorkspaceService,
 )
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -55,7 +55,7 @@ async def get_me(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_session)],
 ) -> UserResponse:
-    workspace = await UserService(db).get_default_workspace(current_user.id)
+    workspace = await WorkspaceService(db).get_default_workspace(current_user.id)
     return UserResponse(
         id=current_user.id,
         email=current_user.email,
