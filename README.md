@@ -1,6 +1,6 @@
 # Rotom Agent
 
-Rotom Agent is a FastAPI-based agent service with PostgreSQL and RabbitMQ support.
+通用 Agent 框架，基于 FastAPI，支持 PostgreSQL 和 RabbitMQ。
 
 ## Local setup
 
