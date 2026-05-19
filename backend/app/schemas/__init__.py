@@ -4,6 +4,7 @@ from app.schemas.auth import (
     TokenResponse,
     UserResponse,
 )
+from app.schemas.chat import ChatRequest, ChatResponse, RunResponse
 from app.schemas.workspace import CreateWorkspaceRequest, WorkspaceResponse
 
 __all__ = [
@@ -11,6 +12,9 @@ __all__ = [
     "RegisterRequest",
     "TokenResponse",
     "UserResponse",
+    "ChatRequest",
+    "ChatResponse",
+    "RunResponse",
     "CreateWorkspaceRequest",
     "WorkspaceResponse",
 ]
