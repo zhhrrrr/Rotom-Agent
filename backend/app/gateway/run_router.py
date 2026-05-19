@@ -36,7 +36,7 @@ class RunRouter:
             # 这里的冲突是：这个 session 已经有任务正在排队或执行。
             raise HTTPException(
                 status_code=409,
-                detail="current session already has a running run",
+                detail="current session already has an active run",
             )
 
     async def create_run(self, context: RequestContext) -> Run:

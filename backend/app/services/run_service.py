@@ -51,7 +51,8 @@ class RunService:
         return await self.db.get(Run, run_id)
 
     async def get_active_run(self, session_id: str) -> Run | None:
-        # 同一个 Session 第一版只允许一个 queued/running Run。
+        # 同一个 Session 第一版只允许一个 active run。
+        # active 包括 queued / running / requires_approval。
         # order_by(created_at.asc()) 让返回结果稳定：如果脏数据里有多个，就返回最早的那个。
         result = await self.db.execute(
             select(Run)

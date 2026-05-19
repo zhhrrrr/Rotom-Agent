@@ -36,23 +36,20 @@ class SessionRouter:
             # 没传 session_id：代表用户开启新对话。
             # title 暂时截取用户消息前 50 个字符，后续可以换成模型总结标题。
             return await self.session_service.create_session(
-                title=context.message[:50],
                 user_id=context.user.id,
                 workspace_id=context.workspace.id,
+                title=context.message[:50],
             )
 
         # 传了 session_id：代表用户想继续某个旧对话。
-        # 先按主键查 session 是否存在。
-        session = await self.session_service.get_session(context.requested_session_id)
+        # v1 不能只按 session_id 查，必须同时带上当前 user 和 workspace 做归属校验。
+        session = await self.session_service.get_owned_session(
+            user_id=context.user.id,
+            workspace_id=context.workspace.id,
+            session_id=context.requested_session_id,
+        )
         if session is None:
             raise HTTPException(status_code=404, detail="Session not found")
-
-        # 关键安全检查：
-        # session 必须同时属于当前用户和当前 workspace。
-        # 这样用户不能拿别人的 session_id 继续对话，也不能把 A workspace 的 session
-        # 错接到 B workspace 里执行工具。
-        if session.user_id != context.user.id or session.workspace_id != context.workspace.id:
-            raise HTTPException(status_code=403, detail="Session does not belong to user workspace")
 
         # 走到这里，说明这个 session 可以安全复用。
         return session
