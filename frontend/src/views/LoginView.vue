@@ -1,9 +1,11 @@
 <template>
   <main class="login-view">
     <section class="login-panel">
-      <RotomIcon class="login-mascot" variant="pixel" />
       <RotomIcon class="login-float" variant="official" />
-      <h1>Rotom Agent</h1>
+      <div class="login-title-row">
+        <RotomIcon class="login-title-icon" variant="pixel" />
+        <h1>Rotom Agent</h1>
+      </div>
       <p class="login-subtitle">{{ isRegisterMode ? "New Trainer" : "Trainer Login" }}</p>
 
       <div class="mode-tabs" role="tablist" aria-label="Auth mode">
@@ -12,6 +14,7 @@
           :class="{ active: !isRegisterMode }"
           @click="isRegisterMode = false"
         >
+          <PokeballIcon tiny />
           Login
         </button>
         <button
@@ -19,6 +22,7 @@
           :class="{ active: isRegisterMode }"
           @click="isRegisterMode = true"
         >
+          <PokeballIcon tiny />
           Register
         </button>
       </div>
@@ -43,6 +47,7 @@
           />
         </label>
         <button type="submit" :disabled="auth.loading">
+          <PokeballIcon tiny />
           {{ auth.loading ? "Loading..." : isRegisterMode ? "Register" : "Login" }}
         </button>
         <p v-if="error" class="form-error">{{ error }}</p>
@@ -55,6 +60,7 @@
 import { ref } from "vue";
 import { useRouter } from "vue-router";
 
+import PokeballIcon from "@/components/PokeballIcon.vue";
 import RotomIcon from "@/components/RotomIcon.vue";
 import { useAuthStore } from "@/stores/auth";
 

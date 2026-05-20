@@ -2,7 +2,7 @@
   <main class="rotom-shell">
     <aside class="rotom-sidebar">
       <div class="brand-lockup">
-        <RotomIcon class="brand-icon" variant="pixel" badge />
+        <RotomIcon class="brand-icon" variant="pixel" />
         <div>
           <h1>Rotom Agent</h1>
           <p>Pixel companion</p>
