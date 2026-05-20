@@ -1,6 +1,6 @@
 <template>
   <span class="pokeball-icon" :class="{ tiny }">
-    <img src="/assets/pokeball-pixel.jpg" alt="Poke Ball" draggable="false" />
+    <img src="/assets/pokeball-pixel-transparent.png" alt="Poke Ball" draggable="false" />
   </span>
 </template>
 

@@ -27,6 +27,6 @@ const src = computed(() => {
   if (props.variant === "small") {
     return "/assets/rotom-small.png";
   }
-  return "/assets/rotom-pixel.jpg";
+  return "/assets/rotom-pixel-transparent.png";
 });
 </script>
