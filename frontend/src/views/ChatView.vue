@@ -6,7 +6,7 @@
         :workspaces="workspace.workspaces"
       />
       <div class="sidebar-card">
-        <RotomIcon class="sidebar-mascot" />
+        <RotomIcon class="sidebar-mascot" variant="small" />
         <p>{{ auth.user?.display_name ?? "Trainer" }}</p>
         <button class="ghost-button" type="button" @click="logout">Logout</button>
       </div>

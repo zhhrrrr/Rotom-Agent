@@ -1,6 +1,6 @@
 <template>
   <article class="message-bubble" :class="message.role">
-    <RotomIcon v-if="message.role === 'assistant'" class="bubble-avatar" />
+    <RotomIcon v-if="message.role === 'assistant'" class="bubble-avatar" variant="small" />
     <div class="bubble-content">
       <p>{{ message.content || "..." }}</p>
       <span v-if="message.running" class="typing-spark">Streaming</span>

@@ -8,10 +8,10 @@ body {
   min-height: 100vh;
   color: var(--text-main);
   background:
-    linear-gradient(45deg, rgba(255, 230, 109, 0.18) 25%, transparent 25%),
-    linear-gradient(-45deg, rgba(43, 217, 254, 0.14) 25%, transparent 25%),
-    linear-gradient(180deg, #6cb9ff 0%, #bdefff 38%, #fff6d7 38%, #f7e49a 100%);
-  background-size: 32px 32px, 32px 32px, auto;
+    repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.16) 0 4px, transparent 4px 16px),
+    repeating-linear-gradient(90deg, rgba(35, 136, 255, 0.18) 0 4px, transparent 4px 16px),
+    linear-gradient(135deg, #2bd9fe 0%, #8eefff 34%, #ffb15f 34%, #ff6a2a 100%);
+  background-size: auto;
   font-family: var(--font-ui);
   image-rendering: pixelated;
 }
@@ -27,53 +27,34 @@ button {
   cursor: pointer;
 }
 
-.rotom-icon {
-  display: block;
-  overflow: visible;
+.rotom-image-frame {
+  display: inline-grid;
+  place-items: center;
   image-rendering: pixelated;
-  filter: drop-shadow(4px 4px 0 rgba(35, 41, 79, 0.28));
 }
 
-.rotom-icon .aura {
-  fill: var(--electric-cyan);
+.rotom-image-frame img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  user-select: none;
 }
 
-.rotom-icon .spark {
-  fill: var(--electric-blue);
+.rotom-image-frame.is-pixel {
+  border: 4px solid var(--pixel-border);
+  background: #ffffff;
+  box-shadow: 5px 5px 0 var(--electric-blue);
 }
 
-.rotom-icon .bolt {
-  fill: var(--energy-yellow);
+.rotom-image-frame.is-official,
+.rotom-image-frame.is-small {
+  filter: drop-shadow(4px 4px 0 rgba(35, 41, 79, 0.42));
 }
 
-.rotom-icon .outline,
-.rotom-icon .smile {
-  fill: var(--pixel-border);
-}
-
-.rotom-icon .body {
-  fill: var(--rotom-orange);
-}
-
-.rotom-icon .body-light {
-  fill: #ff9b4e;
-}
-
-.rotom-icon .body-dark {
-  fill: var(--rotom-orange-dark);
-}
-
-.rotom-icon .shine,
-.rotom-icon .tooth {
-  fill: #fff5d2;
-}
-
-.rotom-icon .eye {
-  fill: #69eaff;
-}
-
-.rotom-icon .eye-shine {
-  fill: #ffffff;
+.rotom-image-frame.is-badge {
+  padding: 4px;
+  background: #ffffff;
 }
 
 .pixel-panel {
@@ -91,6 +72,8 @@ button {
 }
 
 .login-panel {
+  position: relative;
+  overflow: hidden;
   width: min(456px, 100%);
   padding: 28px;
   border: 4px solid var(--pixel-border);
@@ -99,8 +82,19 @@ button {
 }
 
 .login-mascot {
-  width: 128px;
-  margin: 0 auto 8px;
+  width: 184px;
+  height: 104px;
+  margin: 0 auto 12px;
+}
+
+.login-float {
+  position: absolute;
+  top: 18px;
+  right: -30px;
+  width: 140px;
+  height: 140px;
+  opacity: 0.22;
+  pointer-events: none;
 }
 
 .login-panel h1 {
@@ -206,7 +200,9 @@ button {
   min-height: 100vh;
   display: grid;
   grid-template-columns: 304px minmax(0, 1fr);
-  background: rgba(255, 246, 215, 0.35);
+  background:
+    repeating-linear-gradient(45deg, rgba(255, 106, 42, 0.12) 0 12px, transparent 12px 24px),
+    rgba(255, 246, 215, 0.55);
 }
 
 .rotom-sidebar {
@@ -216,13 +212,13 @@ button {
   padding: 20px;
   border-right: 4px solid var(--pixel-border);
   background:
-    repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.14) 0 8px, transparent 8px 16px),
-    var(--game-navy);
+    repeating-linear-gradient(0deg, rgba(43, 217, 254, 0.22) 0 8px, transparent 8px 16px),
+    linear-gradient(180deg, var(--game-navy), #123f66);
 }
 
 .brand-lockup {
   display: grid;
-  grid-template-columns: 78px 1fr;
+  grid-template-columns: 104px 1fr;
   gap: 12px;
   align-items: center;
   padding: 12px;
@@ -232,7 +228,8 @@ button {
 }
 
 .brand-icon {
-  width: 78px;
+  width: 104px;
+  height: 66px;
 }
 
 .brand-lockup h1 {
@@ -272,6 +269,7 @@ button {
 
 .sidebar-mascot {
   width: 72px;
+  height: 72px;
 }
 
 .ghost-button {
@@ -372,6 +370,7 @@ button {
 
 .bubble-avatar {
   width: 48px;
+  height: 48px;
   flex: 0 0 auto;
 }
 

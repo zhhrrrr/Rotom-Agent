@@ -1,7 +1,8 @@
 <template>
   <main class="login-view">
     <section class="login-panel">
-      <RotomIcon class="login-mascot" />
+      <RotomIcon class="login-mascot" variant="pixel" />
+      <RotomIcon class="login-float" variant="official" />
       <h1>Rotom Agent</h1>
       <p class="login-subtitle">{{ isRegisterMode ? "New Trainer" : "Trainer Login" }}</p>
 
