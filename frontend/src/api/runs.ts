@@ -32,15 +32,6 @@ export interface RunDebugResponse {
   event_logs: Array<Record<string, unknown>>;
 }
 
-export interface WorkspaceResponse {
-  id: string;
-  user_id: string;
-  name: string;
-  root_path: string;
-  created_at: string;
-  updated_at: string;
-}
-
 export function listRunChunks(runId: string, after?: number): Promise<RunChunk[]> {
   const params = after === undefined ? "" : `?after=${after}`;
   return request<RunChunk[]>(`/api/runs/${runId}/chunks${params}`);
@@ -48,8 +39,4 @@ export function listRunChunks(runId: string, after?: number): Promise<RunChunk[]
 
 export function getRunDebug(runId: string): Promise<RunDebugResponse> {
   return request<RunDebugResponse>(`/api/runs/${runId}`);
-}
-
-export function listWorkspaces(): Promise<WorkspaceResponse[]> {
-  return request<WorkspaceResponse[]>("/api/workspaces");
 }

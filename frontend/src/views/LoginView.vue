@@ -7,7 +7,6 @@
         <h1>Rotom Agent</h1>
       </div>
       <p class="login-subtitle">
-        <PokeballIcon tiny />
         {{ isRegisterMode ? "New Trainer" : "Trainer Login" }}
       </p>
 
@@ -15,14 +14,14 @@
         <button
           type="button"
           :class="{ active: !isRegisterMode }"
-          @click="isRegisterMode = false"
+          @click="setRegisterMode(false)"
         >
           Login
         </button>
         <button
           type="button"
           :class="{ active: isRegisterMode }"
-          @click="isRegisterMode = true"
+          @click="setRegisterMode(true)"
         >
           Register
         </button>
@@ -47,6 +46,16 @@
             required
           />
         </label>
+        <label v-if="isRegisterMode">
+          <span>Confirm Password</span>
+          <input
+            v-model="confirmPassword"
+            type="password"
+            autocomplete="new-password"
+            minlength="8"
+            required
+          />
+        </label>
         <button type="submit" :disabled="auth.loading">
           {{ auth.loading ? "Loading..." : isRegisterMode ? "Register" : "Login" }}
         </button>
@@ -60,7 +69,6 @@
 import { ref } from "vue";
 import { useRouter } from "vue-router";
 
-import PokeballIcon from "@/components/PokeballIcon.vue";
 import RotomIcon from "@/components/RotomIcon.vue";
 import { useAuthStore } from "@/stores/auth";
 
@@ -70,10 +78,22 @@ const isRegisterMode = ref(false);
 const displayName = ref("");
 const email = ref("");
 const password = ref("");
+const confirmPassword = ref("");
 const error = ref<string | null>(null);
+
+function setRegisterMode(nextMode: boolean): void {
+  isRegisterMode.value = nextMode;
+  confirmPassword.value = "";
+  error.value = null;
+}
 
 async function submit(): Promise<void> {
   error.value = null;
+  if (isRegisterMode.value && password.value !== confirmPassword.value) {
+    error.value = "Passwords do not match";
+    return;
+  }
+
   try {
     if (isRegisterMode.value) {
       await auth.signUp(email.value, password.value, displayName.value);

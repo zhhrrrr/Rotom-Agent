@@ -1,5 +1,6 @@
 import asyncio
 import json
+from contextlib import suppress
 
 from aio_pika.abc import AbstractIncomingMessage
 
@@ -16,6 +17,8 @@ from app.workers import recover_stale_running_runs
 
 setup_logging()
 logger = get_logger(__name__)
+
+RABBITMQ_CONNECT_RETRY_SECONDS = 5
 
 
 # Worker 是后台消费者，不是 HTTP 服务，所以它不监听端口。
@@ -117,7 +120,19 @@ async def run_worker() -> None:
         await recover_stale_running_runs(db)
 
     # Worker 主动连接 RabbitMQ，不需要对外暴露端口。
-    connection = await get_rabbitmq_connection()
+    # Compose 的 healthcheck 只能降低启动竞态概率，不能保证应用层第一次
+    # AMQP 握手一定成功；这里循环重试，避免 Worker 因 RabbitMQ 短暂不可连而退出。
+    while True:
+        with suppress(Exception):
+            connection = await get_rabbitmq_connection()
+            break
+
+        logger.warning(
+            "RabbitMQ connection failed, retrying in %s seconds",
+            RABBITMQ_CONNECT_RETRY_SECONDS,
+        )
+        await asyncio.sleep(RABBITMQ_CONNECT_RETRY_SECONDS)
+
     async with connection:
         channel = await get_rabbitmq_channel(connection)
         # prefetch_count=1 表示一次只拿 1 条未 ack 消息。

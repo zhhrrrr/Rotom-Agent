@@ -6,6 +6,12 @@ from app.schemas.auth import (
 )
 from app.schemas.chat import ChatRequest, ChatResponse, RunDebugResponse
 from app.schemas.run_chunk import RunChunkCreate, RunChunkRead
+from app.schemas.session import (
+    CreateSessionRequest,
+    SessionDetailResponse,
+    SessionMessageResponse,
+    SessionResponse,
+)
 from app.schemas.workspace import CreateWorkspaceRequest, WorkspaceResponse
 
 __all__ = [
@@ -18,6 +24,10 @@ __all__ = [
     "RunDebugResponse",
     "RunChunkCreate",
     "RunChunkRead",
+    "CreateSessionRequest",
+    "SessionResponse",
+    "SessionMessageResponse",
+    "SessionDetailResponse",
     "CreateWorkspaceRequest",
     "WorkspaceResponse",
 ]

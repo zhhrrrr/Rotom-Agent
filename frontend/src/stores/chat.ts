@@ -3,6 +3,13 @@ import { computed, ref } from "vue";
 
 import { createChatRun } from "@/api/chat";
 import { getRunDebug, RunChunk } from "@/api/runs";
+import {
+  createSession,
+  deleteSession as deleteSessionRequest,
+  getSessionDetail,
+  listSessions,
+  SessionResponse,
+} from "@/api/sessions";
 import { subscribeRunStream, RunStreamSubscription } from "@/api/stream";
 
 export interface ChatMessage {
@@ -22,12 +29,14 @@ export interface ToolCard {
 
 export const useChatStore = defineStore("chat", () => {
   const sessionId = ref<string | null>(null);
+  const sessions = ref<SessionResponse[]>([]);
   const activeRunId = ref<string | null>(null);
   const runStatus = ref("idle");
   const messages = ref<ChatMessage[]>([]);
   const tools = ref<ToolCard[]>([]);
   const lastChunkIndex = ref(-1);
   const sending = ref(false);
+  const loadingSessions = ref(false);
   const streamError = ref<string | null>(null);
   const sendError = ref<string | null>(null);
   const subscription = ref<RunStreamSubscription | null>(null);
@@ -68,6 +77,14 @@ export const useChatStore = defineStore("chat", () => {
       activeRunId.value = response.run_id;
       runStatus.value = response.status;
       lastChunkIndex.value = -1;
+      upsertSession({
+        id: response.session_id,
+        user_id: response.user_id,
+        workspace_id: response.workspace_id,
+        title: summarizeTitle(content),
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
       startRunStream(response.run_id);
     } catch (error) {
       sendError.value = error instanceof Error ? error.message : "Send failed";
@@ -78,6 +95,78 @@ export const useChatStore = defineStore("chat", () => {
     } finally {
       sending.value = false;
     }
+  }
+
+  async function loadWorkspaceSessions(workspaceId: string | null): Promise<void> {
+    subscription.value?.close();
+    subscription.value = null;
+    sessionId.value = null;
+    activeRunId.value = null;
+    runStatus.value = "idle";
+    messages.value = [];
+    tools.value = [];
+    sessions.value = [];
+    if (!workspaceId) {
+      return;
+    }
+
+    loadingSessions.value = true;
+    try {
+      sessions.value = await listSessions(workspaceId);
+    } finally {
+      loadingSessions.value = false;
+    }
+  }
+
+  async function createBlankSession(workspaceId: string | null): Promise<void> {
+    if (!workspaceId) {
+      return;
+    }
+
+    const session = await createSession(workspaceId);
+    upsertSession(session);
+    selectBlankSession(session.id);
+  }
+
+  async function selectSession(nextSessionId: string): Promise<void> {
+    subscription.value?.close();
+    subscription.value = null;
+    const detail = await getSessionDetail(nextSessionId);
+    sessionId.value = detail.session.id;
+    activeRunId.value = null;
+    runStatus.value = "idle";
+    tools.value = [];
+    messages.value = detail.messages
+      .filter((message) => message.role === "user" || message.role === "assistant")
+      .map((message) => ({
+        id: message.id,
+        role: message.role as "user" | "assistant",
+        content: message.content,
+        running: false,
+      }));
+    upsertSession(detail.session);
+  }
+
+  async function deleteSession(sessionIdToDelete: string): Promise<void> {
+    await deleteSessionRequest(sessionIdToDelete);
+    sessions.value = sessions.value.filter((session) => session.id !== sessionIdToDelete);
+    if (sessionId.value === sessionIdToDelete) {
+      selectBlankSession(null);
+    }
+  }
+
+  function selectBlankSession(nextSessionId: string | null): void {
+    subscription.value?.close();
+    subscription.value = null;
+    sessionId.value = nextSessionId;
+    activeRunId.value = null;
+    runStatus.value = "idle";
+    messages.value = [];
+    tools.value = [];
+    lastChunkIndex.value = -1;
+    sending.value = false;
+    streamError.value = null;
+    sendError.value = null;
   }
 
   function startRunStream(runId: string): void {
@@ -184,27 +273,50 @@ export const useChatStore = defineStore("chat", () => {
     subscription.value?.close();
     subscription.value = null;
     sessionId.value = null;
+    sessions.value = [];
     activeRunId.value = null;
     runStatus.value = "idle";
     messages.value = [];
     tools.value = [];
     lastChunkIndex.value = -1;
     sending.value = false;
+    loadingSessions.value = false;
     streamError.value = null;
     sendError.value = null;
   }
 
+  function upsertSession(session: SessionResponse): void {
+    const index = sessions.value.findIndex((item) => item.id === session.id);
+    if (index >= 0) {
+      sessions.value.splice(index, 1, session);
+    } else {
+      sessions.value.unshift(session);
+    }
+  }
+
+  function summarizeTitle(content: string): string {
+    const normalized = content.trim().replace(/\s+/g, " ");
+    return normalized.slice(0, 48) || "New Session";
+  }
+
   return {
     sessionId,
+    sessions,
     activeRunId,
     runStatus,
     messages,
     tools,
     lastChunkIndex,
     sending,
+    loadingSessions,
     streamError,
     sendError,
     sendMessage,
+    loadWorkspaceSessions,
+    createBlankSession,
+    selectSession,
+    deleteSession,
+    selectBlankSession,
     handleChunk,
     refreshRun,
     reset,

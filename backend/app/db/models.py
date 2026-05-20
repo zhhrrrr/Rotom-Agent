@@ -413,6 +413,7 @@ class RunChunk(Base):
     chunk_type: Mapped[str] = mapped_column(String(64), nullable=False)
     role: Mapped[str | None] = mapped_column(String(32), nullable=True)
     content: Mapped[str] = mapped_column(Text, nullable=False)
+    # 结构化 JSON
     payload: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     is_final: Mapped[bool] = mapped_column(
         Boolean,
