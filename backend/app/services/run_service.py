@@ -50,6 +50,16 @@ class RunService:
         # 按主键 id 查询 Run。
         return await self.db.get(Run, run_id)
 
+    async def get_owned_run(self, user_id: str, run_id: str) -> Run | None:
+        # run_id 不是权限凭证，查询面向用户的接口时必须同时校验 user_id。
+        result = await self.db.execute(
+            select(Run).where(
+                Run.id == run_id,
+                Run.user_id == user_id,
+            )
+        )
+        return result.scalars().first()
+
     async def get_active_run(self, session_id: str) -> Run | None:
         # 同一个 Session 第一版只允许一个 active run。
         # active 包括 queued / running / requires_approval。

@@ -1,10 +1,12 @@
 from pathlib import Path
+from shutil import rmtree
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.db.models import Workspace
+from app.db.models import EventLog, Message, ModelCall, Run, Session, ToolCall, Workspace
+from app.services.run_service import ACTIVE_STATUSES
 
 
 class WorkspaceService:
@@ -88,6 +90,41 @@ class WorkspaceService:
 
         await self.ensure_workspace_path(workspace)
         return workspace
+
+    async def has_active_run(self, workspace_id: str) -> bool:
+        result = await self.db.execute(
+            select(Run.id)
+            .where(Run.workspace_id == workspace_id, Run.status.in_(ACTIVE_STATUSES))
+            .limit(1)
+        )
+        return result.scalar_one_or_none() is not None
+
+    async def is_default_workspace(self, workspace: Workspace) -> bool:
+        default_workspace = await self.get_default_workspace(workspace.user_id)
+        return default_workspace is not None and default_workspace.id == workspace.id
+
+    async def delete_owned_workspace(self, user_id: str, workspace_id: str) -> bool:
+        workspace = await self.get_owned_workspace(user_id, workspace_id)
+        if workspace is None:
+            return False
+
+        if await self.is_default_workspace(workspace):
+            raise ValueError("Default Workspace cannot be deleted")
+
+        if await self.has_active_run(workspace_id):
+            raise ValueError("Cannot delete a workspace with active runs")
+
+        workspace_root = self.safe_workspace_root(workspace.root_path)
+        await self.db.execute(delete(EventLog).where(EventLog.workspace_id == workspace_id))
+        await self.db.execute(delete(ToolCall).where(ToolCall.workspace_id == workspace_id))
+        await self.db.execute(delete(ModelCall).where(ModelCall.workspace_id == workspace_id))
+        await self.db.execute(delete(Message).where(Message.workspace_id == workspace_id))
+        await self.db.execute(delete(Run).where(Run.workspace_id == workspace_id))
+        await self.db.execute(delete(Session).where(Session.workspace_id == workspace_id))
+        await self.db.execute(delete(Workspace).where(Workspace.id == workspace_id))
+        await self.db.commit()
+        rmtree(workspace_root, ignore_errors=True)
+        return True
 
     async def ensure_workspace_path(self, workspace: Workspace) -> None:
         root_path = self.safe_workspace_root(workspace.root_path)

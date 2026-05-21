@@ -5,6 +5,14 @@ from app.schemas.auth import (
     UserResponse,
 )
 from app.schemas.chat import ChatRequest, ChatResponse, RunDebugResponse
+from app.schemas.session import (
+    CreateSessionRequest,
+    SessionDetailResponse,
+    SessionMessageResponse,
+    SessionResponse,
+    SessionRunResponse,
+    SessionToolCallResponse,
+)
 from app.schemas.workspace import CreateWorkspaceRequest, WorkspaceResponse
 
 __all__ = [
@@ -15,6 +23,12 @@ __all__ = [
     "ChatRequest",
     "ChatResponse",
     "RunDebugResponse",
+    "CreateSessionRequest",
+    "SessionResponse",
+    "SessionMessageResponse",
+    "SessionRunResponse",
+    "SessionToolCallResponse",
+    "SessionDetailResponse",
     "CreateWorkspaceRequest",
     "WorkspaceResponse",
 ]

@@ -1001,6 +1001,14 @@ docker compose -f deploy/docker-compose.yml up -d
 curl http://localhost:8000/health
 ```
 
+实时输出：
+
+- `POST /api/chat` 只创建 queued run。
+- 前端随后订阅 `GET /api/runs/{run_id}/stream`。
+- Worker/Orchestrator 收到 LLM delta 后发布临时 run event。
+- SSE 推送 `message_delta`、`tool_started`、`tool_finished`、`message_final` 和 `done`。
+- 当前版本不再使用 `run_chunks` 持久化分块表。
+
 ## 10. 当前限制和后续方向
 
 - v1 暂不做复杂 RBAC，PermissionService 先使用固定策略。

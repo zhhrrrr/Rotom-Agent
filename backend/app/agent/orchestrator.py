@@ -8,6 +8,7 @@ from app.agent.zhipu_model_client import ZhipuModelClient
 from app.core.logging import get_logger
 from app.db.models import Session, User, Workspace
 from app.services import MessageService, RunService, TraceService
+from app.streaming import RunStreamPublisher
 from app.tools import ToolBroker, tool_registry
 
 logger = get_logger(__name__)
@@ -48,37 +49,51 @@ class AgentOrchestrator:
         run_service = RunService(self.db)
         message_service = MessageService(self.db)
         trace_service = TraceService(self.db)
-
-        # RabbitMQ 里只保存 run_id，所以 Worker 消费后要先回 PostgreSQL 查完整 Run。
-        run = await run_service.get_run(run_id)
-        if run is None:
-            logger.error("Orchestrator run not found run_id=%s", run_id)
-            return None
-
-        session = await self.db.get(Session, run.session_id)
-        workspace = await self.db.get(Workspace, run.workspace_id)
-        user = await self.db.get(User, run.user_id)
-        if session is None or workspace is None or user is None:
-            error = "Run context is incomplete"
-            logger.error(
-                "Orchestrator context missing run_id=%s user=%s workspace=%s session=%s",
-                run_id,
-                user is not None,
-                workspace is not None,
-                session is not None,
-            )
-            await run_service.update_status(run_id, "failed", error=error)
-            await trace_service.log(
-                event_type="run.failed",
-                message=error,
-                user_id=run.user_id,
-                workspace_id=run.workspace_id,
-                session_id=run.session_id,
-                run_id=run.id,
-            )
-            return None
+        stream_publisher = await RunStreamPublisher.create()
+        run = None
 
         try:
+            # RabbitMQ 里只保存 run_id，所以 Worker 消费后要先回 PostgreSQL 查完整 Run。
+            run = await run_service.get_run(run_id)
+            if run is None:
+                logger.error("Orchestrator run not found run_id=%s", run_id)
+                return None
+
+            session = await self.db.get(Session, run.session_id)
+            workspace = await self.db.get(Workspace, run.workspace_id)
+            user = await self.db.get(User, run.user_id)
+            if session is None or workspace is None or user is None:
+                error = "Run context is incomplete"
+                logger.error(
+                    "Orchestrator context missing run_id=%s user=%s workspace=%s session=%s",
+                    run_id,
+                    user is not None,
+                    workspace is not None,
+                    session is not None,
+                )
+                await run_service.update_status(run_id, "failed", error=error)
+                await stream_publisher.publish_run_event(
+                    run,
+                    event_type="error",
+                    content=error,
+                    payload={"stage": "context"},
+                )
+                await trace_service.log(
+                    event_type="run.failed",
+                    message=error,
+                    user_id=run.user_id,
+                    workspace_id=run.workspace_id,
+                    session_id=run.session_id,
+                    run_id=run.id,
+                )
+                return None
+
+            await stream_publisher.publish_run_event(
+                run,
+                event_type="status",
+                content="running",
+                payload={"status": "running", "current_step": "run.started"},
+            )
             # ContextBuilder 负责把 system prompt + 最近历史消息拼成模型 messages。
             # 这里拿到的 messages 会随着工具调用不断追加内容。
             messages = await ContextBuilder(self.db).build(
@@ -105,7 +120,11 @@ class AgentOrchestrator:
             # 真正执行工具是在下面 ToolBroker.invoke_tool()。
             tools = tool_registry.openai_tools()
             # ToolBroker 负责执行工具，并把每次调用写入 tool_calls 表。
-            broker = ToolBroker(db=self.db, run_id=run_id)
+            broker = ToolBroker(
+                db=self.db,
+                run_id=run_id,
+                stream_publisher=stream_publisher,
+            )
 
             for iteration in range(1, self.max_iterations + 1):
                 logger.info(
@@ -118,6 +137,16 @@ class AgentOrchestrator:
                     "running",
                     current_step="model.call.started",
                 )
+                await stream_publisher.publish_run_event(
+                    run,
+                    event_type="status",
+                    content="model_call_started",
+                    payload={
+                        "status": "running",
+                        "current_step": "model.call.started",
+                        "iteration": iteration,
+                    },
+                )
                 await trace_service.log(
                     event_type="model.call.started",
                     message="Model call started",
@@ -128,16 +157,24 @@ class AgentOrchestrator:
                     payload={"iteration": iteration},
                 )
                 try:
-                    response = await self.model_client.chat(
+                    assistant_message = await self._stream_model_response(
+                        run=run,
+                        stream_publisher=stream_publisher,
                         messages=messages,
                         tools=tools,
-                        user_id=run.user_id,
-                        workspace_id=run.workspace_id,
-                        session_id=run.session_id,
-                        run_id=run.id,
                     )
                 except Exception as exc:
                     latency_ms = getattr(self.model_client, "last_latency_ms", None)
+                    await stream_publisher.publish_run_event(
+                        run,
+                        event_type="error",
+                        content=str(exc),
+                        payload={
+                            "stage": "model_call",
+                            "iteration": iteration,
+                            "latency_ms": latency_ms,
+                        },
+                    )
                     await trace_service.log(
                         event_type="model.call.failed",
                         message=str(exc),
@@ -150,7 +187,6 @@ class AgentOrchestrator:
                     raise
 
                 latency_ms = getattr(self.model_client, "last_latency_ms", None)
-                assistant_message = response.choices[0].message
                 await trace_service.log(
                     event_type="model.call.completed",
                     message="Model call completed",
@@ -160,7 +196,7 @@ class AgentOrchestrator:
                     run_id=run.id,
                     payload={"iteration": iteration, "latency_ms": latency_ms},
                 )
-                tool_calls = assistant_message.tool_calls or []
+                tool_calls = self._message_tool_calls(assistant_message)
                 logger.info(
                     "Orchestrator model response run_id=%s iteration=%s tool_calls=%s",
                     run_id,
@@ -193,8 +229,8 @@ class AgentOrchestrator:
                     for tool_call in tool_calls:
                         # tool_call.function.arguments 是 JSON 字符串，需要解析成 dict。
                         # 例如 '{"path": "."}' -> {"path": "."}
-                        tool_name = tool_call.function.name
-                        tool_args = self._parse_tool_args(tool_call.function.arguments)
+                        tool_name = self._tool_call_name(tool_call)
+                        tool_args = self._parse_tool_args(self._tool_call_arguments(tool_call))
                         # 这里会真正执行 list_dir/read_file/write_file/run_shell 等工具，
                         # Broker 内部会完成权限检查、Runtime 选择、tool_calls 和 event_logs 记录。
                         tool_result = await broker.invoke_tool(tool_name, tool_args)
@@ -221,7 +257,7 @@ class AgentOrchestrator:
                         messages.append(
                             {
                                 "role": "tool",
-                                "tool_call_id": tool_call.id,
+                                "tool_call_id": self._tool_call_id(tool_call),
                                 "name": tool_name,
                                 "content": json.dumps(
                                     tool_result.to_model_message(),
@@ -237,7 +273,7 @@ class AgentOrchestrator:
                 # 没有 tool_calls，说明模型已经给出最终自然语言回答。
                 # 这时保存 assistant message，并把 Run 标记为 completed。
                 # 存储工具记录的逻辑在broker中
-                content = assistant_message.content or ""
+                content = self._message_content(assistant_message)
                 await message_service.save_assistant_message(
                     session_id=run.session_id,
                     run_id=run_id,
@@ -245,6 +281,13 @@ class AgentOrchestrator:
                     user_id=run.user_id,
                     workspace_id=run.workspace_id,
                     meta={"model": self.model_client.model},
+                )
+                await stream_publisher.publish_run_event(
+                    run,
+                    event_type="message_final",
+                    role="assistant",
+                    content="",
+                    payload={"model": self.model_client.model},
                 )
                 await run_service.update_status(run_id, "completed")
                 await trace_service.log(
@@ -260,6 +303,12 @@ class AgentOrchestrator:
 
             error = f"Agent exceeded max_iterations={self.max_iterations}"
             await run_service.update_status(run_id, "failed", error=error)
+            await stream_publisher.publish_run_event(
+                run,
+                event_type="error",
+                content=error,
+                payload={"max_iterations": self.max_iterations},
+            )
             await trace_service.log(
                 event_type="run.failed",
                 message=error,
@@ -277,37 +326,77 @@ class AgentOrchestrator:
             # 这样任务不会一直卡在 running，前端也能看到 error。
             logger.exception("Orchestrator exception run_id=%s", run_id)
             await run_service.update_status(run_id, "failed", error=str(exc))
-            await trace_service.log(
-                event_type="run.failed",
-                message=str(exc),
-                user_id=run.user_id,
-                workspace_id=run.workspace_id,
-                session_id=run.session_id,
-                run_id=run.id,
-            )
+            if run is not None:
+                await stream_publisher.publish_run_event(
+                    run,
+                    event_type="error",
+                    content=str(exc),
+                    payload={"stage": "orchestrator"},
+                )
+                await trace_service.log(
+                    event_type="run.failed",
+                    message=str(exc),
+                    user_id=run.user_id,
+                    workspace_id=run.workspace_id,
+                    session_id=run.session_id,
+                    run_id=run.id,
+                )
             return None
+        finally:
+            await stream_publisher.close()
 
     async def execute(self, run_id: str) -> str | None:
         # 兼容第 15 步里已经接入的旧方法名。
         # 后续正式入口统一用 run(run_id)。
         return await self.run(run_id)
 
+    async def _stream_model_response(
+        self,
+        run: Any,
+        stream_publisher: RunStreamPublisher,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        async for event in self.model_client.stream_chat(
+            messages=messages,
+            tools=tools,
+            user_id=run.user_id,
+            workspace_id=run.workspace_id,
+            session_id=run.session_id,
+            run_id=run.id,
+        ):
+            if not event.content:
+                continue
+
+            await stream_publisher.publish_run_event(
+                run,
+                event_type="message_delta",
+                role="assistant",
+                content=event.content,
+                payload={"model": self.model_client.model},
+            )
+
+        return self.model_client.last_stream_message or {
+            "role": "assistant",
+            "content": "",
+        }
+
     def _assistant_tool_call_message(self, assistant_message: Any) -> dict[str, Any]:
         # 模型请求调用工具时，下一轮 messages 里必须保留这条 assistant 消息。
         # 它告诉模型：“上一轮你要求调用了这些工具”。
         return {
             "role": "assistant",
-            "content": assistant_message.content or "",
+            "content": self._message_content(assistant_message),
             "tool_calls": [
                 {
-                    "id": tool_call.id,
-                    "type": tool_call.type,
+                    "id": self._tool_call_id(tool_call),
+                    "type": self._tool_call_type(tool_call),
                     "function": {
-                        "name": tool_call.function.name,
-                        "arguments": tool_call.function.arguments,
+                        "name": self._tool_call_name(tool_call),
+                        "arguments": self._tool_call_arguments(tool_call),
                     },
                 }
-                for tool_call in assistant_message.tool_calls or []
+                for tool_call in self._message_tool_calls(assistant_message)
             ],
         }
 
@@ -325,3 +414,35 @@ class AgentOrchestrator:
             raise ValueError("Tool arguments must be a JSON object")
 
         return parsed
+
+    def _message_content(self, assistant_message: Any) -> str:
+        if isinstance(assistant_message, dict):
+            return assistant_message.get("content") or ""
+        return getattr(assistant_message, "content", None) or ""
+
+    def _message_tool_calls(self, assistant_message: Any) -> list[Any]:
+        if isinstance(assistant_message, dict):
+            return assistant_message.get("tool_calls") or []
+        return getattr(assistant_message, "tool_calls", None) or []
+
+    def _tool_call_id(self, tool_call: Any) -> str:
+        if isinstance(tool_call, dict):
+            return str(tool_call.get("id") or "")
+        return str(getattr(tool_call, "id", "") or "")
+
+    def _tool_call_type(self, tool_call: Any) -> str:
+        if isinstance(tool_call, dict):
+            return str(tool_call.get("type") or "function")
+        return str(getattr(tool_call, "type", None) or "function")
+
+    def _tool_call_name(self, tool_call: Any) -> str:
+        if isinstance(tool_call, dict):
+            return str(tool_call.get("function", {}).get("name") or "")
+        function = getattr(tool_call, "function", None)
+        return str(getattr(function, "name", None) or "")
+
+    def _tool_call_arguments(self, tool_call: Any) -> str | None:
+        if isinstance(tool_call, dict):
+            return tool_call.get("function", {}).get("arguments")
+        function = getattr(tool_call, "function", None)
+        return getattr(function, "arguments", None)

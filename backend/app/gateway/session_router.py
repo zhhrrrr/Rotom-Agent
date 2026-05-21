@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import Session as SessionModel
 from app.gateway.request_context import RequestContext
 from app.services import SessionService
+from app.services.session_service import DEFAULT_SESSION_TITLE
 
 
 class SessionRouter:
@@ -50,6 +51,9 @@ class SessionRouter:
         )
         if session is None:
             raise HTTPException(status_code=404, detail="Session not found")
+
+        if session.title == DEFAULT_SESSION_TITLE:
+            session.title = self.session_service.normalize_title(context.message)
 
         # 走到这里，说明这个 session 可以安全复用。
         return session

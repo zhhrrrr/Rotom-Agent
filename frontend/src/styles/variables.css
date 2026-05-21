@@ -1,0 +1,23 @@
+:root {
+  --rotom-orange: #ff6a2a;
+  --rotom-orange-dark: #c84218;
+  --electric-cyan: #2bd9fe;
+  --electric-blue: #2388ff;
+  --plasma-purple: #6b3af2;
+  --rotom-dark: #1b1b2f;
+  --game-navy: #23294f;
+  --game-cream: #fff6d7;
+  --game-paper: #f7f0c6;
+  --game-brown: #4b3526;
+  --energy-yellow: #ffe66d;
+  --pixel-red: #e84f4f;
+  --pixel-green: #42b96d;
+  --panel-light: #f7fafc;
+  --text-main: #2b2230;
+  --text-invert: #fffaf0;
+  --text-muted: #6d5f72;
+  --pixel-border: #2a2340;
+  --pixel-shadow: #151528;
+  --radius-card: 0;
+  --font-ui: "Courier New", "Lucida Console", Monaco, monospace;
+}

@@ -1,3 +1,4 @@
+import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -8,6 +9,7 @@ from app.core.logging import get_logger
 from app.db.models import DEFAULT_USER_ID, DEFAULT_WORKSPACE_ID, Run, ToolCall, Workspace
 from app.services.permission_service import PermissionService
 from app.services.trace_service import TraceService
+from app.streaming import RunStreamPublisher
 from app.tools.registry import ToolRegistry, tool_registry
 from app.tools.result import ToolResult
 from app.runtime import RuntimeManager
@@ -39,6 +41,7 @@ class ToolBroker:
         permission_service: PermissionService | None = None,
         runtime_manager: RuntimeManager | None = None,
         trace_service: TraceService | None = None,
+        stream_publisher: RunStreamPublisher | None = None,
     ) -> None:
         # db 用来写 tool_calls 表。
         self.db = db
@@ -52,6 +55,7 @@ class ToolBroker:
         self.runtime_manager = runtime_manager or RuntimeManager()
         # Broker 内部写工具事件，避免 Orchestrator 重复关心工具审计细节。
         self.trace_service = trace_service or TraceService(db)
+        self.stream_publisher = stream_publisher
 
     async def invoke_tool(self, tool_name: str, args: dict[str, Any]) -> ToolResult:
         scope = await self._run_scope()
@@ -73,6 +77,13 @@ class ToolBroker:
                 scope=scope,
             )
             await self._log_tool_failed(tool_name, args, result.error, scope, tool_call=tool_call)
+            await self._publish_tool_finished_event(
+                tool_name=tool_name,
+                args=args,
+                result=result,
+                scope=scope,
+                tool_call=tool_call,
+            )
             logger.error(
                 "Tool call end run_id=%s tool_name=%s success=false error=%s",
                 self.run_id,
@@ -94,6 +105,15 @@ class ToolBroker:
                 risk_level=tool.risk_level,
             )
             await self._log_tool_failed(tool_name, args, result.error, scope, tool, tool_call)
+            await self._publish_tool_finished_event(
+                tool_name=tool_name,
+                args=args,
+                result=result,
+                scope=scope,
+                tool_call=tool_call,
+                runtime_type=tool.runtime_type,
+                risk_level=tool.risk_level,
+            )
             logger.error(
                 "Tool call denied run_id=%s tool_name=%s error=%s",
                 self.run_id,
@@ -127,6 +147,15 @@ class ToolBroker:
                 risk_level=tool.risk_level,
             )
             await self._log_tool_failed(tool_name, args, result.error, scope, tool, tool_call)
+            await self._publish_tool_finished_event(
+                tool_name=tool_name,
+                args=args,
+                result=result,
+                scope=scope,
+                tool_call=tool_call,
+                runtime_type=tool.runtime_type,
+                risk_level=tool.risk_level,
+            )
             logger.error(
                 "Tool call denied run_id=%s tool_name=%s risk_level=%s runtime_type=%s error=%s",
                 self.run_id,
@@ -152,6 +181,15 @@ class ToolBroker:
                 risk_level=tool.risk_level,
             )
             await self._log_tool_failed(tool_name, args, result.error, scope, tool, tool_call)
+            await self._publish_tool_finished_event(
+                tool_name=tool_name,
+                args=args,
+                result=result,
+                scope=scope,
+                tool_call=tool_call,
+                runtime_type=tool.runtime_type,
+                risk_level=tool.risk_level,
+            )
             return result
 
         tool_call = ToolCall(
@@ -168,6 +206,7 @@ class ToolBroker:
         await self.db.commit()
         await self.db.refresh(tool_call)
         await self._log_tool_started(tool_call, args, scope)
+        await self._publish_tool_started_event(tool_call, args, scope)
 
         try:
             raw_data = await runtime.execute(tool, args, scope.workspace_root)
@@ -180,6 +219,16 @@ class ToolBroker:
             await self.db.commit()
             await self.db.refresh(tool_call)
             await self._log_tool_completed(tool_call, result, scope)
+            await self._publish_tool_delta_event(tool_call, result, scope)
+            await self._publish_tool_finished_event(
+                tool_name=tool_name,
+                args=args,
+                result=result,
+                scope=scope,
+                tool_call=tool_call,
+                runtime_type=tool.runtime_type,
+                risk_level=tool.risk_level,
+            )
             logger.info(
                 "Tool call end run_id=%s tool_name=%s success=true tool_call_id=%s",
                 self.run_id,
@@ -203,6 +252,15 @@ class ToolBroker:
             await self.db.commit()
             await self.db.refresh(tool_call)
             await self._log_tool_failed(tool_name, args, result.error, scope, tool, tool_call)
+            await self._publish_tool_finished_event(
+                tool_name=tool_name,
+                args=args,
+                result=result,
+                scope=scope,
+                tool_call=tool_call,
+                runtime_type=tool.runtime_type,
+                risk_level=tool.risk_level,
+            )
             logger.error(
                 "Tool call end run_id=%s tool_name=%s success=false tool_call_id=%s error=%s",
                 self.run_id,
@@ -336,6 +394,92 @@ class ToolBroker:
             },
         )
 
+    async def _publish_tool_started_event(
+        self,
+        tool_call: ToolCall,
+        args: dict[str, Any],
+        scope: ToolRunScope,
+    ) -> None:
+        await self._publish_tool_event(
+            event_type="tool_started",
+            content=f"{tool_call.tool_name} started",
+            scope=scope,
+            payload={
+                "tool_call_id": tool_call.id,
+                "tool_name": tool_call.tool_name,
+                "tool_args": args,
+                "runtime_type": tool_call.runtime_type,
+                "risk_level": tool_call.risk_level,
+            },
+        )
+
+    async def _publish_tool_delta_event(
+        self,
+        tool_call: ToolCall,
+        result: ToolResult,
+        scope: ToolRunScope,
+    ) -> None:
+        content = self._tool_result_display(result)
+        if not content:
+            return
+
+        await self._publish_tool_event(
+            event_type="tool_delta",
+            content=content,
+            scope=scope,
+            payload={
+                "tool_call_id": tool_call.id,
+                "tool_name": tool_call.tool_name,
+                "success": result.success,
+            },
+        )
+
+    async def _publish_tool_finished_event(
+        self,
+        tool_name: str,
+        args: dict[str, Any],
+        result: ToolResult,
+        scope: ToolRunScope,
+        tool_call: ToolCall,
+        runtime_type: str | None = None,
+        risk_level: str | None = None,
+    ) -> None:
+        await self._publish_tool_event(
+            event_type="tool_finished",
+            content="completed" if result.success else result.error or "failed",
+            scope=scope,
+            payload={
+                "tool_call_id": tool_call.id,
+                "tool_name": tool_name,
+                "tool_args": args,
+                "success": result.success,
+                "error": result.error,
+                "runtime_type": runtime_type or tool_call.runtime_type,
+                "risk_level": risk_level or tool_call.risk_level,
+            },
+        )
+
+    async def _publish_tool_event(
+        self,
+        event_type: str,
+        content: str,
+        scope: ToolRunScope,
+        payload: dict[str, Any] | None = None,
+    ) -> None:
+        if self.stream_publisher is None or scope.session_id is None:
+            return
+
+        await self.stream_publisher.publish(
+            run_id=self.run_id,
+            user_id=scope.user_id,
+            workspace_id=scope.workspace_id,
+            session_id=scope.session_id,
+            event_type=event_type,
+            role="tool",
+            content=content,
+            payload=payload,
+        )
+
     def _normalize_data(self, raw_data: Any) -> dict[str, Any]:
         # Broker 对外统一返回 {"data": {...}}。
         # list_dir 原始返回 list，所以包成 entries；read_file 原始返回 str，所以包成 content。
@@ -347,3 +491,29 @@ class ToolBroker:
             return {"content": raw_data}
 
         return {"result": raw_data}
+
+    def _tool_result_display(self, result: ToolResult, limit: int = 2000) -> str:
+        if not result.success:
+            return result.error or ""
+
+        data = result.data
+        if isinstance(data, dict):
+            if data.get("stdout") or data.get("stderr"):
+                text = "\n".join(
+                    part
+                    for part in (
+                        str(data.get("stdout") or "").rstrip(),
+                        str(data.get("stderr") or "").rstrip(),
+                    )
+                    if part
+                )
+            elif "content" in data:
+                text = str(data["content"])
+            else:
+                text = json.dumps(data, ensure_ascii=False)
+        else:
+            text = str(data or "")
+
+        if len(text) <= limit:
+            return text
+        return text[:limit] + "\n...[truncated]"

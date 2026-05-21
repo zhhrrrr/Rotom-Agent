@@ -1,7 +1,7 @@
 from collections.abc import AsyncGenerator
 
 # sqlalchemy让你不用手写大量 SQL，也能用 Python 对象来操作数据库
-from sqlalchemy import text 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -80,6 +80,7 @@ async def _upgrade_v1_schema(conn) -> None:
         "CREATE INDEX IF NOT EXISTS ix_runs_workspace_id ON runs (workspace_id)",
         "CREATE INDEX IF NOT EXISTS ix_tool_calls_user_id ON tool_calls (user_id)",
         "CREATE INDEX IF NOT EXISTS ix_tool_calls_workspace_id ON tool_calls (workspace_id)",
+        "DROP TABLE IF EXISTS run_chunks",
     ]
 
     for statement in statements:

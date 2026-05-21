@@ -53,6 +53,7 @@ services:
     build:
       context: ../backend
     container_name: rotom-worker
+    restart: unless-stopped
     env_file:
       - ../backend/.env
     environment:
