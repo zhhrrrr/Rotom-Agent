@@ -1,5 +1,5 @@
 <template>
-  <span class="rotom-image-frame" :class="[`is-${variant}`, { 'is-badge': badge }]">
+  <span class="rotom-image-frame" :class="`is-${variant}`">
     <img :src="src" :alt="alt" draggable="false" />
   </span>
 </template>
@@ -10,12 +10,10 @@ import { computed } from "vue";
 const props = withDefaults(
   defineProps<{
     variant?: "pixel" | "official" | "small";
-    badge?: boolean;
     alt?: string;
   }>(),
   {
     variant: "pixel",
-    badge: false,
     alt: "Rotom",
   },
 );

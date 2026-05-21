@@ -17,7 +17,7 @@
 | event_type | 记录时机 | 作用 |
 | --- | --- | --- |
 | `chat.request.received` | API 收到聊天请求后 | 标记一次用户请求进入系统 |
-| `gateway.auth.checked` | 当前默认身份检查完成后 | 为后续真实 User Gateway 预留审计点 |
+| `gateway.auth.checked` | JWT current_user 解析完成后 | 记录本次请求已经通过用户鉴权 |
 | `workspace.resolved` | 确定 `workspace_id` 后 | 记录本次请求归属哪个 workspace |
 | `session.resolved` | 创建新 session 或找到已有 session 后 | 记录本次请求归属哪个 session |
 | `run.created` | 创建 `runs` 记录后 | 记录 run 已入库 |

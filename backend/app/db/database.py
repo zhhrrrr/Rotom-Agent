@@ -1,7 +1,7 @@
 from collections.abc import AsyncGenerator
 
 # sqlalchemy让你不用手写大量 SQL，也能用 Python 对象来操作数据库
-from sqlalchemy import text 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,

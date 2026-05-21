@@ -15,8 +15,9 @@
 - `POST /api/workspaces`
 - `GET /api/workspaces`
 - `GET /api/workspaces/{workspace_id}`
+- `DELETE /api/workspaces/{workspace_id}`
 
-所有 workspace 接口都需要 JWT，只能访问当前用户自己的 workspace。
+所有 workspace 接口都需要 JWT，只能访问当前用户自己的 workspace。默认 workspace 不允许删除。
 
 ## Chat
 
@@ -71,6 +72,28 @@
 - 查看模型真实输入输出。
 - 查看工具执行记录。
 - 查看 event log 全链路 trace。
+
+## Run Stream
+
+`GET /api/runs/{run_id}/stream`
+
+这个接口返回 `text/event-stream`，前端用它实时接收 Worker/Agent 执行过程。
+
+SSE 事件：
+
+- `run_event`: 包含 `status`、`message_delta`、`message_final`、`tool_started`、`tool_delta`、`tool_finished`、`error`。
+- `done`: run 进入 `completed`、`failed`、`cancelled` 或 `timeout` 后发送，客户端收到后关闭订阅。
+
+流式数据不写入 `run_chunks` 表。当前实现使用 RabbitMQ 临时 run stream queue 作为后端到 SSE 的实时事件通道。
+
+## Sessions
+
+- `POST /api/sessions`
+- `GET /api/sessions?workspace_id=...`
+- `GET /api/sessions/{session_id}?limit=12&before=...`
+- `DELETE /api/sessions/{session_id}`
+
+Session 详情按 run 分页返回，避免长会话一次性加载全部历史。
 
 ## Worker Recovery
 

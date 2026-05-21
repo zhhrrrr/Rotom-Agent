@@ -55,80 +55,6 @@ class ZhipuModelClient:
         self.last_latency_ms: int | None = None
         self.last_stream_message: dict[str, Any] | None = None
 
-    async def chat(
-        self,
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]] | None = None,
-        user_id: str | None = None,
-        workspace_id: str | None = None,
-        session_id: str | None = None,
-        run_id: str | None = None,
-    ):
-        logger.info(
-            "Model call start model=%s messages=%s tools=%s",
-            self.model,
-            len(messages),
-            len(tools or []),
-        )
-        started_at = perf_counter()
-        request_messages = deepcopy(messages)
-        request_tools = deepcopy(tools) if tools is not None else None
-        # messages 是对话上下文，结构类似：
-        # [{"role": "user", "content": "你好"}]
-        kwargs: dict[str, Any] = {
-            "model": self.model,
-            "messages": messages,
-        }
-
-        # tools 只有在需要函数调用 / 工具调用时才传。
-        # tool_choice="auto" 表示让模型自己判断是否需要调用工具。
-        if tools:
-            kwargs["tools"] = tools
-            kwargs["tool_choice"] = "auto"
-
-        try:
-            response = await self.client.chat.completions.create(**kwargs)
-            self.last_latency_ms = int((perf_counter() - started_at) * 1000)
-            await self._record_model_call(
-                user_id=user_id,
-                workspace_id=workspace_id,
-                session_id=session_id,
-                run_id=run_id,
-                request_messages=request_messages,
-                request_tools=request_tools,
-                response_message=self._dump_model_object(response.choices[0].message),
-                prompt_tokens=getattr(getattr(response, "usage", None), "prompt_tokens", None),
-                completion_tokens=getattr(
-                    getattr(response, "usage", None),
-                    "completion_tokens",
-                    None,
-                ),
-                latency_ms=self.last_latency_ms,
-                status="completed",
-            )
-            logger.info(
-                "Model call end model=%s choices=%s latency_ms=%s",
-                self.model,
-                len(response.choices),
-                self.last_latency_ms,
-            )
-            return response
-        except Exception as exc:
-            self.last_latency_ms = int((perf_counter() - started_at) * 1000)
-            await self._record_model_call(
-                user_id=user_id,
-                workspace_id=workspace_id,
-                session_id=session_id,
-                run_id=run_id,
-                request_messages=request_messages,
-                request_tools=request_tools,
-                latency_ms=self.last_latency_ms,
-                status="failed",
-                error=str(exc),
-            )
-            logger.exception("Model call exception model=%s", self.model)
-            raise
-
     async def stream_chat(
         self,
         messages: list[dict[str, Any]],
@@ -275,13 +201,6 @@ class ZhipuModelClient:
             status=status,
             error=error,
         )
-
-    def _dump_model_object(self, value: Any) -> dict[str, Any]:
-        if hasattr(value, "model_dump"):
-            return value.model_dump(mode="json")
-        if isinstance(value, dict):
-            return value
-        return {"value": str(value)}
 
     def _collect_tool_call_deltas(
         self,

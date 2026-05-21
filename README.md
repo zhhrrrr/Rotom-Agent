@@ -1,26 +1,42 @@
 # Rotom Agent
 
-通用 Agent 框架，基于 FastAPI，支持 PostgreSQL 和 RabbitMQ。
+Rotom Agent 是一个带用户、Workspace、RabbitMQ Worker、真实 LLM streaming 和 Vue 前端的工程型 Agent 项目。
 
 ## Local setup
 
-1. Copy the example environment file:
+1. 复制环境变量模板：
 
    ```bash
    cp backend/.env.example backend/.env
    ```
 
-2. Fill in `backend/.env`, especially `ZHIPU_API_KEY`.
+2. 填写 `backend/.env`，尤其是 `ZHIPU_API_KEY`。
 
-3. Start the services:
+3. 按顺序启动依赖、后端 API、Worker 和前端：
 
    ```bash
-   cd deploy
-   docker compose up --build
+   docker compose -f deploy/docker-compose.yml up -d
    ```
 
-4. Check the API:
+   ```bash
+   cd backend
+   uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+   ```
+
+   ```bash
+   cd backend
+   python worker.py
+   ```
+
+   ```bash
+   cd frontend
+   npm run dev -- --host 0.0.0.0
+   ```
+
+4. 检查 API：
 
    ```bash
    curl http://localhost:8000/health
    ```
+
+完整启动说明见 [docs/startup-commands.md](docs/startup-commands.md)。

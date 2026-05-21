@@ -247,10 +247,9 @@ Worker 收到 `run_id` 后，再从数据库读取：
 - session 绑定 workspace。
 - run 绑定 workspace。
 - 工具执行绑定 run 对应 workspace 的 `root_path`。
+- `DockerRuntime` 已接入 `run_shell`。
+- 前端通过 `GET /api/runs/{run_id}/stream` 使用 SSE 接收真实 LLM streaming 事件。
 
-当前还未实现：
+当前仍需继续收紧：
 
-- 独立 `DockerRuntime`。
-- workspace 级运行时挂载策略。
-- WebSocket/SSE 实时 run 状态推送。
 - Gateway 层更细的事务边界控制。

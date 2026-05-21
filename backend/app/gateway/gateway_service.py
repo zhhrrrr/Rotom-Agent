@@ -177,7 +177,7 @@ class GatewayService:
 
         # 立即返回给前端
         # 注意：这里并不返回最终回答，只返回 queued 状态
-        # 前端后续应该轮询 GET /api/runs/{run_id} 或用 WebSocket/SSE 获取结果
+        # 前端后续通过 GET /api/runs/{run_id}/stream 订阅 SSE 获取结果
         return ChatResponse(
             user_id=context.user.id,
             workspace_id=context.workspace.id,

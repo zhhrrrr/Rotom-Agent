@@ -137,7 +137,6 @@ async def run_worker() -> None:
         channel = await get_rabbitmq_channel(connection)
         # prefetch_count=1 表示一次只拿 1 条未 ack 消息。
         # 这样 Worker 不会一口气拿太多任务，适合第一版串行验证。
-        # TODO
         await channel.set_qos(prefetch_count=1)
         # 确保 agent_runs 队列存在。
         queue = await declare_run_queue(channel)
