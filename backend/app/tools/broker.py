@@ -7,10 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
 from app.db.models import DEFAULT_USER_ID, DEFAULT_WORKSPACE_ID, Run, ToolCall, Workspace
-from app.schemas import RunChunkCreate
-from app.services.chunk_service import ChunkService
 from app.services.permission_service import PermissionService
 from app.services.trace_service import TraceService
+from app.streaming import RunStreamPublisher
 from app.tools.registry import ToolRegistry, tool_registry
 from app.tools.result import ToolResult
 from app.runtime import RuntimeManager
@@ -42,7 +41,7 @@ class ToolBroker:
         permission_service: PermissionService | None = None,
         runtime_manager: RuntimeManager | None = None,
         trace_service: TraceService | None = None,
-        chunk_service: ChunkService | None = None,
+        stream_publisher: RunStreamPublisher | None = None,
     ) -> None:
         # db 用来写 tool_calls 表。
         self.db = db
@@ -56,7 +55,7 @@ class ToolBroker:
         self.runtime_manager = runtime_manager or RuntimeManager()
         # Broker 内部写工具事件，避免 Orchestrator 重复关心工具审计细节。
         self.trace_service = trace_service or TraceService(db)
-        self.chunk_service = chunk_service or ChunkService(db)
+        self.stream_publisher = stream_publisher
 
     async def invoke_tool(self, tool_name: str, args: dict[str, Any]) -> ToolResult:
         scope = await self._run_scope()
@@ -78,7 +77,7 @@ class ToolBroker:
                 scope=scope,
             )
             await self._log_tool_failed(tool_name, args, result.error, scope, tool_call=tool_call)
-            await self._append_tool_finished_chunk(
+            await self._publish_tool_finished_event(
                 tool_name=tool_name,
                 args=args,
                 result=result,
@@ -106,7 +105,7 @@ class ToolBroker:
                 risk_level=tool.risk_level,
             )
             await self._log_tool_failed(tool_name, args, result.error, scope, tool, tool_call)
-            await self._append_tool_finished_chunk(
+            await self._publish_tool_finished_event(
                 tool_name=tool_name,
                 args=args,
                 result=result,
@@ -148,7 +147,7 @@ class ToolBroker:
                 risk_level=tool.risk_level,
             )
             await self._log_tool_failed(tool_name, args, result.error, scope, tool, tool_call)
-            await self._append_tool_finished_chunk(
+            await self._publish_tool_finished_event(
                 tool_name=tool_name,
                 args=args,
                 result=result,
@@ -182,7 +181,7 @@ class ToolBroker:
                 risk_level=tool.risk_level,
             )
             await self._log_tool_failed(tool_name, args, result.error, scope, tool, tool_call)
-            await self._append_tool_finished_chunk(
+            await self._publish_tool_finished_event(
                 tool_name=tool_name,
                 args=args,
                 result=result,
@@ -207,7 +206,7 @@ class ToolBroker:
         await self.db.commit()
         await self.db.refresh(tool_call)
         await self._log_tool_started(tool_call, args, scope)
-        await self._append_tool_started_chunk(tool_call, args, scope)
+        await self._publish_tool_started_event(tool_call, args, scope)
 
         try:
             raw_data = await runtime.execute(tool, args, scope.workspace_root)
@@ -220,8 +219,8 @@ class ToolBroker:
             await self.db.commit()
             await self.db.refresh(tool_call)
             await self._log_tool_completed(tool_call, result, scope)
-            await self._append_tool_delta_chunk(tool_call, result, scope)
-            await self._append_tool_finished_chunk(
+            await self._publish_tool_delta_event(tool_call, result, scope)
+            await self._publish_tool_finished_event(
                 tool_name=tool_name,
                 args=args,
                 result=result,
@@ -253,7 +252,7 @@ class ToolBroker:
             await self.db.commit()
             await self.db.refresh(tool_call)
             await self._log_tool_failed(tool_name, args, result.error, scope, tool, tool_call)
-            await self._append_tool_finished_chunk(
+            await self._publish_tool_finished_event(
                 tool_name=tool_name,
                 args=args,
                 result=result,
@@ -395,14 +394,14 @@ class ToolBroker:
             },
         )
 
-    async def _append_tool_started_chunk(
+    async def _publish_tool_started_event(
         self,
         tool_call: ToolCall,
         args: dict[str, Any],
         scope: ToolRunScope,
     ) -> None:
-        await self._append_tool_chunk(
-            chunk_type="tool_started",
+        await self._publish_tool_event(
+            event_type="tool_started",
             content=f"{tool_call.tool_name} started",
             scope=scope,
             payload={
@@ -414,7 +413,7 @@ class ToolBroker:
             },
         )
 
-    async def _append_tool_delta_chunk(
+    async def _publish_tool_delta_event(
         self,
         tool_call: ToolCall,
         result: ToolResult,
@@ -424,8 +423,8 @@ class ToolBroker:
         if not content:
             return
 
-        await self._append_tool_chunk(
-            chunk_type="tool_delta",
+        await self._publish_tool_event(
+            event_type="tool_delta",
             content=content,
             scope=scope,
             payload={
@@ -435,7 +434,7 @@ class ToolBroker:
             },
         )
 
-    async def _append_tool_finished_chunk(
+    async def _publish_tool_finished_event(
         self,
         tool_name: str,
         args: dict[str, Any],
@@ -445,8 +444,8 @@ class ToolBroker:
         runtime_type: str | None = None,
         risk_level: str | None = None,
     ) -> None:
-        await self._append_tool_chunk(
-            chunk_type="tool_finished",
+        await self._publish_tool_event(
+            event_type="tool_finished",
             content="completed" if result.success else result.error or "failed",
             scope=scope,
             payload={
@@ -458,32 +457,27 @@ class ToolBroker:
                 "runtime_type": runtime_type or tool_call.runtime_type,
                 "risk_level": risk_level or tool_call.risk_level,
             },
-            is_final=not result.success,
         )
 
-    async def _append_tool_chunk(
+    async def _publish_tool_event(
         self,
-        chunk_type: str,
+        event_type: str,
         content: str,
         scope: ToolRunScope,
         payload: dict[str, Any] | None = None,
-        is_final: bool = False,
     ) -> None:
-        if scope.session_id is None:
+        if self.stream_publisher is None or scope.session_id is None:
             return
 
-        await self.chunk_service.append_chunk(
-            RunChunkCreate(
-                run_id=self.run_id,
-                user_id=scope.user_id,
-                workspace_id=scope.workspace_id,
-                session_id=scope.session_id,
-                chunk_type=chunk_type,
-                role="tool",
-                content=content,
-                payload=payload,
-                is_final=is_final,
-            )
+        await self.stream_publisher.publish(
+            run_id=self.run_id,
+            user_id=scope.user_id,
+            workspace_id=scope.workspace_id,
+            session_id=scope.session_id,
+            event_type=event_type,
+            role="tool",
+            content=content,
+            payload=payload,
         )
 
     def _normalize_data(self, raw_data: Any) -> dict[str, Any]:

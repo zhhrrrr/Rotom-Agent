@@ -9,6 +9,7 @@ from app.gateway.session_router import SessionRouter
 from app.queue.producer import publish_run
 from app.schemas import ChatRequest, ChatResponse
 from app.services import MessageService, TraceService, WorkspaceService
+from app.streaming.run_stream import prepare_run_stream
 
 
 # 创建当前模块的 logger
@@ -159,6 +160,7 @@ class GatewayService:
         # 把 run_id 发布到 RabbitMQ
         # 注意只发布 run_id，不发布完整上下文
         # Worker 收到 run_id 后，再从数据库加载 run/session/messages
+        await prepare_run_stream(context.run.id)
         await publish_run(context.run.id)
 
         # 记录：run 已入队

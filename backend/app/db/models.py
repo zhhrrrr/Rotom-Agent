@@ -5,13 +5,11 @@ from typing import Any
 from uuid import uuid4
 
 from sqlalchemy import (
-    Boolean,
     DateTime,
     ForeignKey,
     Integer,
     String,
     Text,
-    UniqueConstraint,
     func,
     text,
 )
@@ -267,7 +265,6 @@ class Run(Base):
     tool_calls: Mapped[list[ToolCall]] = relationship(back_populates="run")
     model_calls: Mapped[list[ModelCall]] = relationship(back_populates="run")
     event_logs: Mapped[list[EventLog]] = relationship(back_populates="run")
-    chunks: Mapped[list[RunChunk]] = relationship(back_populates="run")
 
 
 # tool_calls 表记录模型要求调用了什么工具、传了什么参数、工具返回了什么结果。
@@ -384,47 +381,3 @@ class EventLog(Base):
     )
 
     run: Mapped[Run | None] = relationship(back_populates="event_logs")
-
-
-class RunChunk(Base):
-    __tablename__ = "run_chunks"
-    __table_args__ = (
-        UniqueConstraint(
-            "run_id",
-            "chunk_index",
-            name="uq_run_chunks_run_id_chunk_index",
-        ),
-    )
-
-    id: Mapped[str] = mapped_column(
-        String(64),
-        primary_key=True,
-        default=lambda: new_id("chunk"),
-    )
-    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"), index=True, nullable=False)
-    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
-    workspace_id: Mapped[str] = mapped_column(
-        ForeignKey("workspaces.id"),
-        index=True,
-        nullable=False,
-    )
-    session_id: Mapped[str] = mapped_column(ForeignKey("sessions.id"), index=True, nullable=False)
-    chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
-    chunk_type: Mapped[str] = mapped_column(String(64), nullable=False)
-    role: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    content: Mapped[str] = mapped_column(Text, nullable=False)
-    # 结构化 JSON
-    payload: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
-    is_final: Mapped[bool] = mapped_column(
-        Boolean,
-        nullable=False,
-        default=False,
-        server_default=text("false"),
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        server_default=func.now(),
-        nullable=False,
-    )
-
-    run: Mapped[Run] = relationship(back_populates="chunks")

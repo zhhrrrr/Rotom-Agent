@@ -3,7 +3,6 @@ from app.services.auth_service import (
     EmailAlreadyRegisteredError,
     InvalidCredentialsError,
 )
-from app.services.chunk_service import ChunkService
 from app.services.message_service import MessageService
 from app.services.model_call_service import ModelCallService
 from app.services.permission_service import PermissionDecision, PermissionService
@@ -17,7 +16,6 @@ __all__ = [
     "AuthService",
     "EmailAlreadyRegisteredError",
     "InvalidCredentialsError",
-    "ChunkService",
     "MessageService",
     "ModelCallService",
     "PermissionDecision",

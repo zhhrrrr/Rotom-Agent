@@ -5,7 +5,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.db.models import EventLog, Message, ModelCall, Run, RunChunk, Session, ToolCall, Workspace
+from app.db.models import EventLog, Message, ModelCall, Run, Session, ToolCall, Workspace
 from app.services.run_service import ACTIVE_STATUSES
 
 
@@ -116,7 +116,6 @@ class WorkspaceService:
 
         workspace_root = self.safe_workspace_root(workspace.root_path)
         await self.db.execute(delete(EventLog).where(EventLog.workspace_id == workspace_id))
-        await self.db.execute(delete(RunChunk).where(RunChunk.workspace_id == workspace_id))
         await self.db.execute(delete(ToolCall).where(ToolCall.workspace_id == workspace_id))
         await self.db.execute(delete(ModelCall).where(ModelCall.workspace_id == workspace_id))
         await self.db.execute(delete(Message).where(Message.workspace_id == workspace_id))

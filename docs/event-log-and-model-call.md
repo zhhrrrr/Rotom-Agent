@@ -53,14 +53,15 @@
 每次执行：
 
 ```python
-response = await self.model_client.chat(
+async for event in self.model_client.stream_chat(
     messages=messages,
     tools=tools,
     user_id=run.user_id,
     workspace_id=run.workspace_id,
     session_id=run.session_id,
     run_id=run.id,
-)
+):
+    ...
 ```
 
 都会产生一条 `model_calls`。
@@ -68,8 +69,17 @@ response = await self.model_client.chat(
 当前职责边界是：
 
 - `AgentOrchestrator` 负责决定什么时候调用模型，并传入 `user_id`、`workspace_id`、`session_id`、`run_id`。
-- `ZhipuModelClient` 负责计时、调用智谱模型、保存 `model_calls` 成功/失败记录。
+- `ZhipuModelClient` 负责计时、调用智谱模型 streaming API、聚合最终响应、保存 `model_calls` 成功/失败记录。
 - `ModelCallService` 只负责把已经整理好的记录写入数据库。
+
+v1.5 当前流式链路为：
+
+1. `AgentOrchestrator` 调用 `ZhipuModelClient.stream_chat(...)`。
+2. 智谱 OpenAI-compatible streaming API 返回 delta event。
+3. Orchestrator 收到每段 `content` delta 后立即发布临时 run event。
+4. `/api/runs/{run_id}/stream` SSE 接口从 RabbitMQ 临时订阅队列读取 run event 并推给前端。
+5. 模型流结束后，`ZhipuModelClient` 聚合完整 assistant message，写入一条 `model_calls(status="completed")`。
+6. Orchestrator 保存最终 assistant message，并发布 `message_final` run event。
 
 ### 成功时
 

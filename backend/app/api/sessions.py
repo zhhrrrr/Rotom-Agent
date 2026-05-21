@@ -1,18 +1,22 @@
 from typing import Annotated
 
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_user
 from app.db.database import get_session
-from app.db.models import Message, Session as SessionModel, User
+from app.db.models import Message, Run, Session as SessionModel, ToolCall, User
 from app.schemas import (
     CreateSessionRequest,
     SessionDetailResponse,
     SessionMessageResponse,
     SessionResponse,
+    SessionRunResponse,
+    SessionToolCallResponse,
 )
-from app.services import MessageService, SessionService, WorkspaceService
+from app.services import SessionService, WorkspaceService
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 
@@ -63,15 +67,24 @@ async def get_session_detail(
     session_id: str,
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_session)],
+    before: Annotated[datetime | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=50)] = 12,
 ) -> SessionDetailResponse:
     session = await SessionService(db).get_session(session_id)
     if session is None or session.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    messages = await MessageService(db).list_session_messages(session.id)
+    runs, has_more = await _list_session_runs(db, session.id, before=before, limit=limit)
+    run_ids = [run.id for run in runs]
+    messages = await _list_session_messages(db, run_ids)
+    tool_calls = await _list_session_tool_calls(db, run_ids)
     return SessionDetailResponse(
         session=_session_response(session),
         messages=[_message_response(message) for message in messages],
+        runs=[_run_response(run) for run in runs],
+        tool_calls=[_tool_call_response(tool_call) for tool_call in tool_calls],
+        has_more=has_more,
+        next_before=runs[0].created_at if runs else None,
     )
 
 
@@ -115,4 +128,79 @@ def _message_response(message: Message) -> SessionMessageResponse:
         content=message.content,
         meta=message.meta,
         created_at=message.created_at,
+    )
+
+
+async def _list_session_runs(
+    db: AsyncSession,
+    session_id: str,
+    before: datetime | None,
+    limit: int,
+) -> tuple[list[Run], bool]:
+    stmt = select(Run).where(Run.session_id == session_id)
+    if before is not None:
+        stmt = stmt.where(Run.created_at < before)
+
+    result = await db.execute(
+        stmt.order_by(Run.created_at.desc()).limit(limit + 1)
+    )
+    rows = list(result.scalars().all())
+    return list(reversed(rows[:limit])), len(rows) > limit
+
+
+async def _list_session_messages(db: AsyncSession, run_ids: list[str]) -> list[Message]:
+    if not run_ids:
+        return []
+
+    result = await db.execute(
+        select(Message)
+        .where(Message.run_id.in_(run_ids))
+        .order_by(Message.created_at.asc())
+    )
+    return list(result.scalars().all())
+
+
+async def _list_session_tool_calls(db: AsyncSession, run_ids: list[str]) -> list[ToolCall]:
+    if not run_ids:
+        return []
+
+    result = await db.execute(
+        select(ToolCall)
+        .where(ToolCall.run_id.in_(run_ids))
+        .order_by(ToolCall.created_at.asc())
+    )
+    return list(result.scalars().all())
+
+
+def _run_response(run: Run) -> SessionRunResponse:
+    return SessionRunResponse(
+        id=run.id,
+        user_id=run.user_id,
+        workspace_id=run.workspace_id,
+        session_id=run.session_id,
+        user_input=run.user_input,
+        status=run.status,
+        current_step=run.current_step,
+        error=run.error,
+        created_at=run.created_at,
+        updated_at=run.updated_at,
+        finished_at=run.finished_at,
+    )
+
+
+def _tool_call_response(tool_call: ToolCall) -> SessionToolCallResponse:
+    return SessionToolCallResponse(
+        id=tool_call.id,
+        user_id=tool_call.user_id,
+        workspace_id=tool_call.workspace_id,
+        run_id=tool_call.run_id,
+        tool_name=tool_call.tool_name,
+        tool_args=tool_call.tool_args,
+        tool_result=tool_call.tool_result,
+        status=tool_call.status,
+        runtime_type=tool_call.runtime_type,
+        risk_level=tool_call.risk_level,
+        error=tool_call.error,
+        created_at=tool_call.created_at,
+        finished_at=tool_call.finished_at,
     )

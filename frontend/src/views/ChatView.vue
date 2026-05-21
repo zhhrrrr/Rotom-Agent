@@ -44,12 +44,14 @@
     </template>
 
     <ChatWindow
-      :messages="chat.messages"
-      :tools="chat.tools"
+      :run-records="chat.runRecords"
       :status="chat.runStatus"
       :disabled="chat.sending || !workspace.activeWorkspaceId"
       :error="chat.streamError || chat.sendError"
+      :has-older="chat.hasOlderHistory"
+      :loading-older="chat.loadingOlderHistory"
       @send="send"
+      @load-older="chat.loadOlderHistory"
     />
   </RotomShell>
   <ConfirmDialog
@@ -136,7 +138,7 @@ async function selectSession(nextSessionId: string): Promise<void> {
 function deleteSession(sessionId: string): void {
   openConfirmDialog({
     title: "Delete Session",
-    message: "This will delete the session history, runs, tool traces, model calls, and chunks.",
+    message: "This will delete the session history, runs, tool traces, and model calls.",
     action: async () => {
       await chat.deleteSession(sessionId);
     },

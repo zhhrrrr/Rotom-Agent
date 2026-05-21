@@ -80,14 +80,7 @@ async def _upgrade_v1_schema(conn) -> None:
         "CREATE INDEX IF NOT EXISTS ix_runs_workspace_id ON runs (workspace_id)",
         "CREATE INDEX IF NOT EXISTS ix_tool_calls_user_id ON tool_calls (user_id)",
         "CREATE INDEX IF NOT EXISTS ix_tool_calls_workspace_id ON tool_calls (workspace_id)",
-        "CREATE INDEX IF NOT EXISTS ix_run_chunks_run_id ON run_chunks (run_id)",
-        "CREATE INDEX IF NOT EXISTS ix_run_chunks_user_id ON run_chunks (user_id)",
-        "CREATE INDEX IF NOT EXISTS ix_run_chunks_workspace_id ON run_chunks (workspace_id)",
-        "CREATE INDEX IF NOT EXISTS ix_run_chunks_session_id ON run_chunks (session_id)",
-        (
-            "CREATE UNIQUE INDEX IF NOT EXISTS uq_run_chunks_run_id_chunk_index "
-            "ON run_chunks (run_id, chunk_index)"
-        ),
+        "DROP TABLE IF EXISTS run_chunks",
     ]
 
     for statement in statements:

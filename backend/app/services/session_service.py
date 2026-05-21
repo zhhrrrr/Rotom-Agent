@@ -6,7 +6,6 @@ from app.db.models import (
     Message,
     ModelCall,
     Run,
-    RunChunk,
     Session as SessionModel,
     ToolCall,
 )
@@ -107,7 +106,6 @@ class SessionService:
 
         run_ids = select(Run.id).where(Run.session_id == session_id)
         await self.db.execute(delete(EventLog).where(EventLog.session_id == session_id))
-        await self.db.execute(delete(RunChunk).where(RunChunk.session_id == session_id))
         await self.db.execute(delete(ToolCall).where(ToolCall.run_id.in_(run_ids)))
         await self.db.execute(delete(ModelCall).where(ModelCall.session_id == session_id))
         await self.db.execute(delete(Message).where(Message.session_id == session_id))

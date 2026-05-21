@@ -1,6 +1,6 @@
 import { request } from "./http";
 
-export type RunChunkType =
+export type RunStreamEventType =
   | "message_delta"
   | "message_final"
   | "tool_started"
@@ -9,18 +9,15 @@ export type RunChunkType =
   | "status"
   | "error";
 
-export interface RunChunk {
-  id: string;
+export interface RunStreamEvent {
   run_id: string;
-  user_id: string;
-  workspace_id: string;
-  session_id: string;
-  chunk_index: number;
-  chunk_type: RunChunkType;
+  user_id: string | null;
+  workspace_id: string | null;
+  session_id: string | null;
+  type: RunStreamEventType;
   role: string | null;
   content: string;
   payload: Record<string, unknown> | null;
-  is_final: boolean;
   created_at: string;
 }
 
@@ -30,11 +27,6 @@ export interface RunDebugResponse {
   tool_calls: Array<Record<string, unknown>>;
   model_calls: Array<Record<string, unknown>>;
   event_logs: Array<Record<string, unknown>>;
-}
-
-export function listRunChunks(runId: string, after?: number): Promise<RunChunk[]> {
-  const params = after === undefined ? "" : `?after=${after}`;
-  return request<RunChunk[]>(`/api/runs/${runId}/chunks${params}`);
 }
 
 export function getRunDebug(runId: string): Promise<RunDebugResponse> {

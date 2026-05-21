@@ -1,8 +1,8 @@
-import { RunChunk } from "./runs";
+import { RunStreamEvent } from "./runs";
 import { apiUrl, getAccessToken } from "./http";
 
 export interface RunStreamHandlers {
-  onChunk: (chunk: RunChunk) => void;
+  onEvent: (event: RunStreamEvent) => void;
   onDone: (data: { run_id: string; status: string }) => void;
   onError?: (error: Error) => void;
 }
@@ -14,10 +14,9 @@ export interface RunStreamSubscription {
 export function subscribeRunStream(
   runId: string,
   handlers: RunStreamHandlers,
-  after?: number,
 ): RunStreamSubscription {
   const controller = new AbortController();
-  void readRunStream(runId, handlers, controller, after);
+  void readRunStream(runId, handlers, controller);
   return {
     close: () => controller.abort(),
   };
@@ -27,12 +26,10 @@ async function readRunStream(
   runId: string,
   handlers: RunStreamHandlers,
   controller: AbortController,
-  after?: number,
 ): Promise<void> {
   const token = getAccessToken();
-  const query = after === undefined ? "" : `?after=${after}`;
   try {
-    const response = await fetch(apiUrl(`/api/runs/${runId}/stream${query}`), {
+    const response = await fetch(apiUrl(`/api/runs/${runId}/stream`), {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
       signal: controller.signal,
     });
@@ -74,8 +71,8 @@ function dispatchSseEvent(text: string, handlers: RunStreamHandlers): void {
   }
 
   const data = JSON.parse(rawData);
-  if (event === "chunk") {
-    handlers.onChunk(data as RunChunk);
+  if (event === "run_event") {
+    handlers.onEvent(data as RunStreamEvent);
   }
   if (event === "done") {
     handlers.onDone(data as { run_id: string; status: string });
